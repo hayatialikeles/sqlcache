@@ -201,6 +201,7 @@ REDIS_ENABLED=true
 
 ```bash
 DB_COALESCE_QUERIES=true          # Aynı anda gelen aynı cache-miss'ler tek sorguyu paylaşır (varsayılan: true)
+DB_PAGINATION_REUSE_TOTAL=false   # Sayfalama toplamını aynı sorgunun diğer sayfalarında yeniden kullan (varsayılan: false)
 REDIS_WAIT_TIMEOUT=10000          # Redis'in (yeniden) bağlanması için en fazla bekleme, ms (varsayılan: 10000)
 REDIS_FAIL_FAST=true              # Bu süre kadar kesintiden sonra cache okuma/yazma beklemeden devam eder (varsayılan: true)
 REDIS_COMMAND_TIMEOUT=10000       # Tek bir komutun yanıtsız kalabileceği süre, ms (varsayılan: en az 10000, 0 = kapalı)

@@ -31,6 +31,9 @@ DB_QUEUE_LIMIT=0                      # Max queued requests (default: 0 = unlimi
 DB_CONNECT_TIMEOUT=10000              # Connection timeout in ms (default: 10000)
 DB_MULTIPLE_STATEMENTS=false          # Allow multiple statements (default: true, for backward compatibility)
 DB_COALESCE_QUERIES=true              # Concurrent identical cache misses share one query (default: true)
+DB_PAGINATION_REUSE_TOTAL=false       # Reuse a query's pagination total across pages (default: false)
+DB_MAX_IDLE=10                        # Idle connections kept in the pool (default: 10)
+DB_IDLE_TIMEOUT=60000                 # Idle time (ms) before connections above DB_MAX_IDLE close (default: 60000)
 TIMEZONE=+00:00                       # Timezone offset (default: +00:00)
 ```
 
@@ -189,6 +192,26 @@ DB_CONNECTION_LIMIT=100
 DB_QUEUE_LIMIT=500
 DB_CONNECT_TIMEOUT=3000
 ```
+
+### Bursty Traffic
+
+Connections above `DB_MAX_IDLE` are closed once idle for `DB_IDLE_TIMEOUT` and opened again on the
+next burst. If load comes in bursts further apart than that (e.g. scheduled jobs), every burst pays
+for new connections; keep them warm by raising `DB_MAX_IDLE` towards `DB_CONNECTION_LIMIT` or by
+raising `DB_IDLE_TIMEOUT`:
+
+```bash
+DB_CONNECTION_LIMIT=50
+DB_MAX_IDLE=50
+```
+
+### Large Result Sets and Deep Pages
+
+- Cached results are stored as JSON: about 10 ms to serialize and 4 ms to parse per 10,000 rows of
+  a typical 10-column table, so prefer `getCacheQueryPagination` over caching very large results.
+- Pagination uses `LIMIT offset, size`; MySQL reads and skips `offset` rows, so very deep pages cost
+  more. For long lists, an indexed `WHERE id > ?` (keyset) condition in the SQL stays fast at any depth.
+- `DB_PAGINATION_REUSE_TOTAL=true` avoids recounting the total on every page miss of large lists.
 
 ### Monitoring Pool Usage
 

@@ -180,7 +180,9 @@ Execute paginated SELECT query with caching.
 Since v2.9.0 the total is counted with `SELECT COUNT(*)` over the query, and not at all when the
 requested page is the last one. Queries MySQL cannot wrap in a derived table (e.g. duplicate column
 names) are counted by fetching every row, as before; a leading `MAX_EXECUTION_TIME` hint also
-bounds the count. Concurrent cache misses for the same page share one database query.
+bounds the count. Concurrent cache misses for the same page share one database query. With
+`DB_PAGINATION_REUSE_TOTAL=true` the total of one page is reused for the other pages of the same
+query until `cacheName` is invalidated.
 
 #### Signature
 
@@ -359,6 +361,8 @@ bulkInsert<T = any>(
   - `chunkSize` (number): Records per chunk (default: 1000)
   - `database` (string | null): Database to switch to
   - `resetCacheName` (string | null): Cache pattern to invalidate
+  - `transaction` (boolean, v2.9.0): insert all chunks in one transaction, all or nothing
+    (default: false, each chunk commits on its own as before)
 
 #### Returns
 
