@@ -1,6 +1,6 @@
 {
   "name": "node-caching-mysql-connector-with-redis",
-  "version": "2.8.1",
+  "version": "2.9.0",
   "description": "MySQL caching connector with Redis, auto key generation, auto invalidation, transaction support, and TypeScript",
   "main": "index.js",
   "types": "index.d.ts",
