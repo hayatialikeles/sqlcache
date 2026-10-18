@@ -1,7 +1,7 @@
 {
-  "name": "node-caching-mysql-connector-with-redis",
+  "name": "sqlcache",
   "version": "2.9.0",
-  "description": "MySQL caching connector with Redis, auto key generation, auto invalidation, transaction support, and TypeScript",
+  "description": "Read-through Redis caching for MySQL: invalidation, pagination, transactions, resilience, TypeScript (formerly node-caching-mysql-connector-with-redis)",
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
@@ -30,12 +30,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/hayatialikeles/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS"
+    "url": "https://github.com/hayatialikeles/sqlcache"
   },
   "bugs": {
-    "url": "https://github.com/hayatialikeles/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS/issues"
+    "url": "https://github.com/hayatialikeles/sqlcache/issues"
   },
-  "homepage": "https://github.com/hayatialikeles/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS#readme",
+  "homepage": "https://github.com/hayatialikeles/sqlcache#readme",
   "files": [
     "index.js",
     "index.d.ts",

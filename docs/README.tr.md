@@ -1,10 +1,13 @@
-# MySQL Redis Cache Connector
+# sqlcache
 
-[![npm version](https://img.shields.io/npm/v/node-caching-mysql-connector-with-redis.svg)](https://www.npmjs.com/package/node-caching-mysql-connector-with-redis)
-[![Test Coverage](https://img.shields.io/badge/coverage-98.07%25-brightgreen.svg)](https://github.com/hayatialikeles/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS)
-[![Tests](https://img.shields.io/badge/tests-215%20passing-brightgreen.svg)](https://github.com/hayatialikeles/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS)
-[![TypeScript](https://img.shields.io/badge/TypeScript-Full%20Support-blue.svg)](https://github.com/hayatialikeles/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS)
+[![npm version](https://img.shields.io/npm/v/sqlcache.svg)](https://www.npmjs.com/package/sqlcache)
+[![TypeScript](https://img.shields.io/badge/TypeScript-Full%20Support-blue.svg)](https://github.com/hayatialikeles/sqlcache)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
+
+> **Eski adı `node-caching-mysql-connector-with-redis`.** Paket v2.9.0 ile `sqlcache` adını aldı; API
+> aynı. Eski adla kurulu projeler çalışmaya devam eder: eski adın 2.9.0 sürümü `sqlcache`'e yönlendirir.
+> Geçiş için: `npm uninstall node-caching-mysql-connector-with-redis && npm install sqlcache`, ardından
+> `require('node-caching-mysql-connector-with-redis')` yerine `require('sqlcache')`.
 
 Üretim ortamına hazır, **otomatik Redis önbellekleme**, **akıllı cache temizleme** ve **transaction desteği** içeren MySQL connector paketi.
 
@@ -36,7 +39,7 @@ await QuaryCache('UPDATE users SET status = ? WHERE id = ?', ['inactive', 123]);
 ### Kurulum
 
 ```bash
-npm install node-caching-mysql-connector-with-redis
+npm install sqlcache
 ```
 
 ### Temel Kullanım
@@ -53,7 +56,7 @@ CORE_AUTO_FEATURES=true  # Akıllı özellikleri etkinleştir 🎯
 ```
 
 ```javascript
-const { getCacheQuery, QuaryCache, withTransaction } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQuery, QuaryCache, withTransaction } = require('sqlcache');
 
 // Otomatik cache ile veri okuma
 const users = await getCacheQuery('SELECT * FROM users WHERE id = ?', [123]);
@@ -245,7 +248,7 @@ npm run coverage
 ## 📝 TypeScript Desteği
 
 ```typescript
-import { getCacheQuery, withTransaction, TransactionContext } from 'node-caching-mysql-connector-with-redis';
+import { getCacheQuery, withTransaction, TransactionContext } from 'sqlcache';
 
 interface User {
   id: number;

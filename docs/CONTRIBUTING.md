@@ -6,7 +6,7 @@ Thank you for your interest in contributing! We welcome contributions from the c
 
 ### Reporting Bugs
 
-1. Check if the issue already exists in [GitHub Issues](https://github.com/hayatialikeles/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS/issues)
+1. Check if the issue already exists in [GitHub Issues](https://github.com/hayatialikeles/sqlcache/issues)
 2. If not, create a new issue with:
    - Clear title and description
    - Steps to reproduce
@@ -27,8 +27,8 @@ Thank you for your interest in contributing! We welcome contributions from the c
 
 1. **Fork the repository**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS.git
-   cd NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS
+   git clone https://github.com/YOUR_USERNAME/sqlcache.git
+   cd sqlcache
    npm install
    ```
 
@@ -76,8 +76,8 @@ Thank you for your interest in contributing! We welcome contributions from the c
 
 ```bash
 # Clone repository
-git clone https://github.com/hayatialikeles/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS.git
-cd NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS
+git clone https://github.com/hayatialikeles/sqlcache.git
+cd sqlcache
 
 # Install dependencies
 npm install

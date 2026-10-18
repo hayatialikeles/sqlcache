@@ -22,7 +22,7 @@ Comprehensive examples for common use cases.
 ### Complete Order Flow with Transactions
 
 ```javascript
-const { withTransaction, getCacheQuery, QuaryCache } = require('node-caching-mysql-connector-with-redis');
+const { withTransaction, getCacheQuery, QuaryCache } = require('sqlcache');
 
 // Create order with stock management
 app.post('/orders', async (req, res) => {
@@ -313,7 +313,7 @@ app.get('/dashboard/stats', getTenantDb, async (req, res) => {
 ### Bulk Event Logging
 
 ```javascript
-const { bulkInsert } = require('node-caching-mysql-connector-with-redis');
+const { bulkInsert } = require('sqlcache');
 
 // Log events in bulk
 app.post('/analytics/events/bulk', async (req, res) => {
@@ -343,7 +343,7 @@ app.post('/analytics/events/bulk', async (req, res) => {
 ### Real-Time Analytics Report
 
 ```javascript
-const { getCacheQueryWithTimeout } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQueryWithTimeout } = require('sqlcache');
 
 app.get('/analytics/report/daily', async (req, res) => {
     try {
@@ -508,7 +508,7 @@ app.post('/auth/register', async (req, res) => {
 ### Session Management
 
 ```javascript
-const { addArrayItem, getArrayItem, delKeyItem } = require('node-caching-mysql-connector-with-redis');
+const { addArrayItem, getArrayItem, delKeyItem } = require('sqlcache');
 
 // Create session
 app.post('/auth/login', async (req, res) => {

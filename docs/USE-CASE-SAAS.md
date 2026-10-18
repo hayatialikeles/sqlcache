@@ -3,7 +3,7 @@
 ## Database per Tenant
 
 ```javascript
-const { getCacheQuery, QuaryCache } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQuery, QuaryCache } = require('sqlcache');
 
 // Middleware: Extract tenant
 app.use((req, res, next) => {
