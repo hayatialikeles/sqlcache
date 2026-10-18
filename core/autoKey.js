@@ -11,10 +11,10 @@ let autoKeyEnabled = false;
 
 /**
  * Enables auto key generation feature
- * @param {Object} config - Configuration options
+ * @param {Object|boolean} config - Configuration options, or true/false to enable/disable
  */
 function enableAutoKey(config = {}) {
-    autoKeyEnabled = config.enabled !== false;
+    autoKeyEnabled = typeof config === 'boolean' ? config : config.enabled !== false;
 }
 
 /**
@@ -22,6 +22,14 @@ function enableAutoKey(config = {}) {
  */
 function isAutoKeyEnabled() {
     return autoKeyEnabled || process.env.CORE_AUTO_FEATURES === 'true';
+}
+
+/**
+ * JSON.stringify replacer for parameters: JSON.stringify throws on a BigInt, so it is encoded
+ * as {"$bigint":"<digits>"}. Every other value is returned as is (unchanged hashes).
+ */
+function bigIntReplacer(name, value) {
+    return typeof value === 'bigint' ? { $bigint: value.toString() } : value;
 }
 
 /**
@@ -36,7 +44,7 @@ function createParameterHash(parameters) {
 
     return crypto
         .createHash('md5')
-        .update(JSON.stringify(parameters))
+        .update(JSON.stringify(parameters, bigIntReplacer))
         .digest('hex')
         .substring(0, 8);
 }
@@ -80,8 +88,9 @@ function extractWhereConditions(sql) {
 
     const whereClause = whereMatch[1].trim();
 
-    // Split by AND/OR but preserve the column names
-    const conditions = whereClause.split(/\s+(AND|OR)\s+/i)
+    // Split by AND/OR but preserve the column names. A match only starts where a whitespace
+    // run starts (same splits as /\s+(AND|OR)\s+/i, which is quadratic on long whitespace runs)
+    const conditions = whereClause.split(/(?<!\s)\s+(AND|OR)\s+/i)
         .filter(part => !/^(AND|OR)$/i.test(part.trim()));
 
     return conditions.map(c => c.trim());
@@ -100,7 +109,8 @@ function extractColumnNames(conditions) {
         // Match: column_name > ?
         // Match: column_name IN (?)
         // Match: column_name LIKE ?
-        const columnMatch = condition.match(/(\w+)\s*(?:=|>|<|>=|<=|!=|<>|IN|LIKE|NOT\s+IN|NOT\s+LIKE)/i);
+        // (\b: the match always starts at a word start anyway; without it, long words are quadratic)
+        const columnMatch = condition.match(/\b(\w+)\s*(?:=|>|<|>=|<=|!=|<>|IN|LIKE|NOT\s+IN|NOT\s+LIKE)/i);
 
         if (columnMatch) {
             columns.push(columnMatch[1].toLowerCase());
@@ -156,6 +166,20 @@ function analyzeSql(sql) {
 }
 
 /**
+ * Key of SQL without a detectable table: the SQL hash, plus the parameter hash when there are
+ * parameters, so that e.g. CALL get_user(?) for two different users never shares a key
+ * @param {string} queryKey - 'query:<sqlhash>'
+ * @param {Array} parameters - Query parameters
+ * @returns {string} - Cache key
+ */
+function queryKeyWithParameters(queryKey, parameters) {
+    if (!parameters || parameters.length === 0) {
+        return queryKey;
+    }
+    return `${queryKey}:${createParameterHash(parameters)}`;
+}
+
+/**
  * Generates cache key with detailed column information
  * @param {string} sql - SQL query
  * @param {Array} parameters - Query parameters
@@ -165,7 +189,7 @@ function generateDetailedKey(sql, parameters) {
     const { tableName, hasConditions, columnPart, queryKey } = analyzeSql(sql);
 
     if (!tableName) {
-        return queryKey;
+        return queryKeyWithParameters(queryKey, parameters);
     }
 
     if (!hasConditions) {
@@ -196,7 +220,7 @@ function generateSimpleKey(sql, parameters) {
     const { tableName, queryKey } = analyzeSql(sql);
 
     if (!tableName) {
-        return queryKey;
+        return queryKeyWithParameters(queryKey, parameters);
     }
 
     const paramHash = createParameterHash(parameters);

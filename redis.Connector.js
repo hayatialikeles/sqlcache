@@ -73,15 +73,14 @@ function createClient() {
         // timer value (~24.8 days) so the retry below really does not give up.
         connect_timeout: 2147483647,
         // Unlimited retry — exponential backoff with jitter, never gives up
+        // (each attempt is logged once, by the 'reconnecting' handler below)
         retry_strategy: (options) => {
             const exp = Math.min(
                 RECONNECT_BASE_DELAY * Math.pow(2, options.attempt - 1),
                 RECONNECT_MAX_DELAY
             );
             const jitter = Math.floor(Math.random() * exp * 0.2);
-            const delay = exp + jitter;
-            console.log(`Redis reconnecting in ${delay}ms (attempt ${options.attempt})`);
-            return delay;
+            return exp + jitter;
         }
     });
 
@@ -356,9 +355,11 @@ async function deleteMatching(pattern) {
 // ── Missed invalidations ───────────────────────────────────────
 // Deletes that failed because Redis was unreachable are replayed once it is ready again, so a
 // write made during an outage does not leave stale entries behind for the rest of their TTL.
-// Bounded: beyond the limit the oldest entries are dropped (as every entry was before).
+// Bounded: beyond the limit the oldest entries are dropped (as every entry was before), which
+// is logged once per outage.
 const MAX_MISSED_INVALIDATIONS = 1000;
 const missedInvalidations = new Map();
+let missedOverflowLogged = false;
 
 function rememberInvalidations(type, values) {
     for (const value of values) {
@@ -367,11 +368,16 @@ function rememberInvalidations(type, values) {
         missedInvalidations.set(id, { type, value });
         if (missedInvalidations.size > MAX_MISSED_INVALIDATIONS) {
             missedInvalidations.delete(missedInvalidations.keys().next().value);
+            if (!missedOverflowLogged) {
+                missedOverflowLogged = true;
+                console.error(`Redis: more than ${MAX_MISSED_INVALIDATIONS} invalidations were missed while it was unavailable; the oldest were dropped and those entries may stay stale until they expire`);
+            }
         }
     }
 }
 
 function replayInvalidations() {
+    missedOverflowLogged = false;
     if (missedInvalidations.size === 0) return;
     const missed = [...missedInvalidations.values()];
     missedInvalidations.clear();
@@ -395,8 +401,80 @@ function replayInvalidations() {
 
 // ── Helpers ────────────────────────────────────────────────────
 
+// REDIS_VHOST is read on every call but meant to be set once: it is shared by every concurrent
+// request. A change at runtime (as opposed to the first value used) is warned about once.
+let firstVhost = null;
+let vhostChangeWarned = false;
+
 function _namespaceKey(key) {
-    return process.env.REDIS_VHOST ? `${process.env.REDIS_VHOST}:${key}` : key;
+    const vhost = process.env.REDIS_VHOST;
+    if (!vhostChangeWarned) {
+        const current = vhost || '';
+        if (firstVhost === null) {
+            firstVhost = current;
+        } else if (current !== firstVhost) {
+            vhostChangeWarned = true;
+            console.warn(`sqlcache: REDIS_VHOST changed at runtime ("${firstVhost}" -> "${current}"). It is shared by every concurrent request; for per-tenant caches pass a per-call database or prefix the cache names (see docs/USE-CASE-SAAS.md).`);
+        }
+    }
+    return vhost ? `${vhost}:${key}` : key;
+}
+
+// ── Stale-fill guard ───────────────────────────────────────────
+// A read-through fill whose SELECT read rows before a write, but whose SETEX comes after that
+// write's invalidation, would store the old rows again for the whole TTL. So every delete is
+// recorded when delKeyItem/delPrefixKeyItem is called (before any wait, whether it then succeeds,
+// fails or is kept for replay) under an increasing sequence number. A fill carries the number read
+// before its SELECT started and skips SETEX when a delete recorded since then covers its key:
+// a deleted key matches exactly, a deleted pattern by its literal prefix (the part before the
+// first glob character). That may skip a fill needlessly (harmless), but never stores one over
+// a delete that covers it. Only deletes made through this process are seen.
+const DELETE_LOG_SIZE = 1000;
+const deleteLog = new Array(DELETE_LOG_SIZE); // the n-th delete is at index n % DELETE_LOG_SIZE
+let deleteSequence = 0;
+const GLOB_CHARS = /[*?[\\]/;
+
+function recordDelete(entry) {
+    deleteSequence++;
+    deleteLog[deleteSequence % DELETE_LOG_SIZE] = entry;
+}
+
+/** The part of a SCAN MATCH pattern before its first glob character */
+function literalPrefix(pattern) {
+    const glob = pattern.search(GLOB_CHARS);
+    return glob === -1 ? pattern : pattern.slice(0, glob);
+}
+
+/**
+ * True when a delete recorded after `sequence` covers `namespacedKey`, or may do so because the
+ * log no longer reaches back to `sequence`. Only the deletes newer than `sequence` are checked.
+ */
+function deletedSince(sequence, namespacedKey) {
+    const newer = deleteSequence - sequence;
+    if (newer === 0) return false;
+    if (!(newer > 0 && newer <= DELETE_LOG_SIZE)) return true;
+    const key = String(namespacedKey); // as Redis sees it (e.g. a numeric cache name)
+    for (let n = deleteSequence; n > sequence; n--) {
+        const entry = deleteLog[n % DELETE_LOG_SIZE];
+        if (entry.prefix !== undefined ? key.startsWith(entry.prefix) : key === entry.key) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Stores a read-through fill like addArrayItem, unless a delete recorded after `sequence` (read
+ * before the fill's SELECT started) covers the key. Checked right before SETEX is sent, after
+ * any wait for the connection.
+ */
+function fillArrayItem(key, array, sequence, expiryDate = 40000) {
+    return safeExec(async () => {
+        const namespacedKey = _namespaceKey(key);
+        if (deletedSince(sequence, namespacedKey)) return array;
+        await runCommand('setex', [namespacedKey, expiryDate, JSON.stringify(array)]);
+        return array;
+    }, array, { skippable: true });
 }
 
 // Connect eagerly unless Redis is disabled (after all state above is initialized)
@@ -453,6 +531,7 @@ module.exports = {
             return undefined;
         }
         const namespacedKeys = Array.isArray(keys) ? keys.map(key => _namespaceKey(key)) : [_namespaceKey(keys)];
+        for (const key of namespacedKeys) recordDelete({ key: String(key) });
         return safeExec(async () => {
             await runCommand('del', Array.isArray(keys) ? [namespacedKeys] : namespacedKeys, false);
         }, undefined, { onFailure: () => rememberInvalidations('key', namespacedKeys) });
@@ -467,6 +546,7 @@ module.exports = {
     async delPrefixKeyItem(keys) {
         const prefixes = Array.isArray(keys) ? mergeInvalidationPatterns(keys) : [keys];
         const patterns = prefixes.map(prefix => _namespaceKey(`${prefix}*`));
+        for (const pattern of patterns) recordDelete({ prefix: literalPrefix(pattern) });
         return safeExec(async () => {
             await Promise.all(patterns.map(deleteMatching));
         }, undefined, { onFailure: () => rememberInvalidations('pattern', patterns) });
@@ -474,8 +554,11 @@ module.exports = {
 
     /**
      * Check if Redis connection is healthy. Useful for health-check endpoints.
+     * With REDIS_ENABLED=false it does not open a connection by itself: false until the client
+     * exists (e.g. after getRedisClient()).
      */
     isRedisConnected() {
+        if (!REDIS_ENABLED && !client) return false;
         getClient();
         return isRedisReady;
     },
@@ -486,4 +569,14 @@ module.exports = {
     getRedisClient() {
         return getClient();
     }
+};
+
+// ── Internal (for dbConnector; not re-exported by index.js) ────
+// The stale-fill guard: sequence() is read before a read-through SELECT starts, fill() stores
+// its rows. addArrayItem is the public function that fill() stands in for, so that dbConnector
+// can tell when it has been replaced.
+module.exports._fillGuard = {
+    addArrayItem: module.exports.addArrayItem,
+    sequence: () => deleteSequence,
+    fill: fillArrayItem
 };
