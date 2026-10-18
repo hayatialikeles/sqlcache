@@ -292,7 +292,7 @@ describe('dbConnector', () => {
                 return [pageData];
             });
         }
-        const pageQuery = () => mockConnection.query.getCalls().find(call => / LIMIT \?, \?$/.test(call.args[0]));
+        const pageQuery = () => mockConnection.query.getCalls().find(call => /\nLIMIT \?, \?$/.test(call.args[0]));
 
         it('should return cached pagination data if available', async () => {
             const cachedData = {
@@ -550,7 +550,7 @@ describe('dbConnector', () => {
 
             // Verify SQL structure: ORDER BY comes before LIMIT
             const pageSql = pageQuery().args[0];
-            expect(pageSql).to.match(/ORDER BY.*LIMIT/); // ORDER BY before LIMIT
+            expect(pageSql).to.match(/ORDER BY[\s\S]*LIMIT/); // ORDER BY before LIMIT
             expect(pageSql).to.include('LIMIT ?, ?');
         });
 

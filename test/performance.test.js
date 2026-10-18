@@ -236,7 +236,7 @@ describe('Performance & Resilience (v2.9.0)', () => {
 
                 expect(result).to.deep.equal({ totalCount: 42, pageCount: 21, detail: [{ id: 1 }, { id: 2 }] });
                 expect(mockConnection.query.firstCall.args).to.deep.equal([
-                    'SELECT * FROM users WHERE status = ? LIMIT ?, ?',
+                    'SELECT * FROM users WHERE status = ?\nLIMIT ?, ?',
                     ['active', 2, 2]
                 ]);
                 expect(mockConnection.query.secondCall.args).to.deep.equal([
@@ -927,19 +927,25 @@ describe('Performance & Resilience (v2.9.0)', () => {
                 expect(connector.getRedisClient()).to.equal(client);
             });
 
-            it('isRedisConnected() connects on first use with REDIS_ENABLED=false, so health checks still see Redis', () => {
+            it('isRedisConnected() does not connect with REDIS_ENABLED=false, but reports a client created on demand', () => {
                 const { connector, createClient } = load(createMockClient(), { REDIS_ENABLED: 'false' });
 
+                expect(connector.isRedisConnected()).to.be.false;
+                expect(createClient).to.not.have.been.called;
+
+                connector.getRedisClient();
                 expect(connector.isRedisConnected()).to.be.true; // the mock is ready as soon as it exists
-                expect(createClient).to.have.been.calledOnce;
             });
 
-            it('logs each reconnect delay as before', () => {
-                const { createClient } = load(createMockClient());
+            it('logs each reconnect attempt once', () => {
+                const client = createMockClient();
+                const { createClient } = load(client);
+                console.log.resetHistory();
 
                 createClient.firstCall.args[0].retry_strategy({ attempt: 3 });
+                client.emit('reconnecting', { attempt: 3, delay: 2100 });
 
-                expect(console.log).to.have.been.calledWithMatch(/^Redis reconnecting in \d+ms \(attempt 3\)$/);
+                expect(console.log).to.have.been.calledOnceWithExactly('Redis reconnecting... (attempt 3, delay 2100ms)');
             });
 
             it('ignores invalid numeric settings', async () => {

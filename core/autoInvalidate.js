@@ -10,12 +10,12 @@ let invalidationRules = {};
 
 /**
  * Enables auto invalidation feature
- * @param {Object} config - Configuration options
+ * @param {Object|boolean} config - Configuration options, or true/false to enable/disable
  * @param {boolean} config.enabled - Enable/disable auto invalidation
  * @param {Object} config.tables - Table-specific invalidation patterns
  */
 function enableAutoInvalidation(config = {}) {
-    autoInvalidationEnabled = config.enabled !== false;
+    autoInvalidationEnabled = typeof config === 'boolean' ? config : config.enabled !== false;
     invalidationRules = config.tables || {};
 }
 
@@ -124,6 +124,16 @@ function determineInvalidationPatterns(sql, manualPattern = null) {
 const GLOB_SPECIAL_CHARS = /[*?[\]\\]/;
 
 /**
+ * The pattern without its trailing '*' characters (a loop: /\*+$/ is quadratic on long runs of
+ * '*' inside the pattern)
+ */
+function stripTrailingStars(pattern) {
+    let end = pattern.length;
+    while (end > 0 && pattern.charCodeAt(end - 1) === 42 /* '*' */) end--;
+    return end === pattern.length ? pattern : pattern.slice(0, end);
+}
+
+/**
  * Reduces a list of prefix patterns to fewer Redis SCAN passes, without changing which keys
  * they match. Patterns are prefixes (delPrefixKeyItem appends '*'), so trailing '*' do not
  * matter. For patterns that are plain literals:
@@ -139,7 +149,7 @@ function mergeInvalidationPatterns(patterns) {
     const literals = [];
     for (const pattern of patterns) {
         if (typeof pattern !== 'string') continue;
-        const literal = pattern.replace(/\*+$/, '');
+        const literal = stripTrailingStars(pattern);
         if (literal && !GLOB_SPECIAL_CHARS.test(literal)) literals.push(literal);
     }
 
@@ -148,7 +158,7 @@ function mergeInvalidationPatterns(patterns) {
     const seen = new Set();
 
     for (const pattern of patterns) {
-        const literal = typeof pattern === 'string' ? pattern.replace(/\*+$/, '') : null;
+        const literal = typeof pattern === 'string' ? stripTrailingStars(pattern) : null;
         if (!literal || GLOB_SPECIAL_CHARS.test(literal)) {
             result.push(pattern);
             continue;
