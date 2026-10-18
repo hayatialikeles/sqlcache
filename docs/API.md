@@ -177,6 +177,11 @@ await QuaryCache(
 
 Execute paginated SELECT query with caching.
 
+Since v2.9.0 the total is counted with `SELECT COUNT(*)` over the query, and not at all when the
+requested page is the last one. Queries MySQL cannot wrap in a derived table (e.g. duplicate column
+names) are counted by fetching every row, as before; a leading `MAX_EXECUTION_TIME` hint also
+bounds the count. Concurrent cache misses for the same page share one database query.
+
 #### Signature
 
 ```typescript
@@ -408,6 +413,12 @@ getCacheQueryWithTimeout<T = any>(
 - `options` (object, optional):
   - `timeout` (number): Timeout in milliseconds (default: 30000)
   - `database` (string | null): Database to switch to
+  - `cancelOnTimeout` (boolean, v2.9.0): stop a query still running on the server when the timeout
+    fires (`KILL QUERY`, using a short-lived extra connection) instead of letting it finish and cache
+    its result (default: false)
+
+Since v2.9.0 a call whose timeout fires before its query started (e.g. while waiting for a pool
+connection) no longer runs the query afterwards.
 
 #### Returns
 
@@ -513,7 +524,8 @@ setInterval(() => {
 
 ### getArrayItem
 
-Retrieve data from Redis cache.
+Retrieve data from Redis cache. Never throws: returns `[]` on a miss or when Redis is unavailable
+(immediately once Redis has been down for `REDIS_WAIT_TIMEOUT`, see `REDIS_FAIL_FAST`).
 
 #### Signature
 
@@ -536,7 +548,8 @@ if (users.length > 0) {
 
 ### addArrayItem
 
-Store data in Redis cache.
+Store data in Redis cache. Never throws: if Redis is unavailable the data is returned without being
+cached.
 
 #### Signature
 
@@ -564,7 +577,8 @@ await addArrayItem('active-users', users, 3600); // 1 hour TTL
 
 ### delKeyItem
 
-Delete one or more cache keys.
+Delete one or more cache keys. Waits for Redis and is never cut short by `REDIS_COMMAND_TIMEOUT`;
+keys that could not be deleted because Redis was unreachable are deleted once it is ready again.
 
 #### Signature
 
@@ -586,7 +600,10 @@ await delKeyItem(['user-123', 'user-456', 'user-789']);
 
 ### delPrefixKeyItem
 
-Delete all keys matching prefix pattern(s).
+Delete all keys matching prefix pattern(s). Uses `SCAN` (`REDIS_SCAN_COUNT` keys per round trip)
+and deletes while scanning; several prefixes are scanned concurrently, and prefixes that can share
+one pass (e.g. `users_` and `users:`) are merged. Waits like `delKeyItem`, and invalidations missed
+during an outage are replayed when Redis is ready again.
 
 #### Signature
 
