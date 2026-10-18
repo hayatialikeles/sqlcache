@@ -123,7 +123,8 @@ declare module 'node-caching-mysql-connector-with-redis' {
      * **v2.9.0:** the total is counted with `SELECT COUNT(*)` over the query, and not at all when the
      * requested page is the last one. Queries MySQL cannot wrap in a derived table (e.g. duplicate
      * column names) are counted by fetching every row, as before. A leading `MAX_EXECUTION_TIME`
-     * optimizer hint also bounds the count.
+     * optimizer hint also bounds the count. With `DB_PAGINATION_REUSE_TOTAL=true` the total of one
+     * page is reused for the other pages of the same query until `cacheName` is invalidated.
      *
      * @param sql - The SQL query to execute
      * @param parameters - The parameters to be used in the SQL query
@@ -290,6 +291,11 @@ declare module 'node-caching-mysql-connector-with-redis' {
         chunkSize?: number;
         /** Cache name prefix to reset after insert */
         resetCacheName?: string | null;
+        /**
+         * v2.9.0: insert all chunks in one transaction (all or nothing, and faster for large
+         * inserts). Without it each chunk commits on its own, as before (default: false)
+         */
+        transaction?: boolean;
     }
 
     /**

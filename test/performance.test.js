@@ -18,7 +18,8 @@ const { expect } = chai;
 const ENV_KEYS = [
     'DB_HOST', 'DB_USERNAME', 'DB_NAME', 'REDIS_ENABLED', 'REDIS_SERVER', 'REDIS_PORT', 'REDIS_VHOST',
     'REDIS_PASSWORD', 'REDIS_WAIT_TIMEOUT', 'REDIS_COMMAND_TIMEOUT', 'REDIS_FAIL_FAST', 'REDIS_SCAN_COUNT',
-    'REDIS_RECONNECT_MAX_DELAY', 'CORE_AUTO_INVALIDATION', 'DB_COALESCE_QUERIES', 'CORE_AUTO_FEATURES'
+    'REDIS_RECONNECT_MAX_DELAY', 'CORE_AUTO_INVALIDATION', 'DB_COALESCE_QUERIES', 'CORE_AUTO_FEATURES',
+    'DB_PAGINATION_REUSE_TOTAL'
 ];
 
 function clearEnv() {
@@ -468,6 +469,64 @@ describe('Performance & Resilience (v2.9.0)', () => {
             });
         });
 
+        describe('DB_PAGINATION_REUSE_TOTAL', () => {
+            const fullPage = () => [Array.from({ length: 10 }, (_, i) => ({ id: i }))];
+            const isTotalKey = key => /^users:total:[0-9a-f]{16}$/.test(key);
+
+            function reload() {
+                process.env.DB_PAGINATION_REUSE_TOTAL = 'true';
+                dbConnector = proxyquire('../dbConnector', {
+                    'mysql2/promise': { createPool: sinon.stub().returns(mockPool) },
+                    './redis.Connector': mockRedis
+                });
+            }
+
+            it('counts once and stores the total under the cache name', async () => {
+                reload();
+                mockConnection.query.onCall(0).resolves(fullPage());
+                mockConnection.query.onCall(1).resolves([[{ total: 500 }]]);
+
+                const result = await dbConnector.getCacheQueryPagination('SELECT * FROM users', [], 'users', 0, 10);
+
+                expect(result.totalCount).to.equal(500);
+                const totalWrite = mockRedis.addArrayItem.getCalls().find(call => isTotalKey(call.args[0]));
+                expect(totalWrite.args[1]).to.deep.equal([500]);
+            });
+
+            it('reuses a stored total for the other pages instead of counting again', async () => {
+                reload();
+                mockRedis.getArrayItem.callsFake(async key => (isTotalKey(key) ? [500] : []));
+                mockConnection.query.resolves(fullPage());
+
+                const result = await dbConnector.getCacheQueryPagination('SELECT * FROM users', [], 'users', 7, 10);
+
+                expect(result).to.deep.include({ totalCount: 500, pageCount: 50 });
+                expect(mockConnection.query).to.have.been.calledOnce;
+            });
+
+            it('counts again when a page past the stored total comes back empty', async () => {
+                reload();
+                mockRedis.getArrayItem.callsFake(async key => (isTotalKey(key) ? [500] : []));
+                mockConnection.query.onCall(0).resolves([[]]);
+                mockConnection.query.onCall(1).resolves([[{ total: 300 }]]);
+
+                const result = await dbConnector.getCacheQueryPagination('SELECT * FROM users', [], 'users', 40, 10);
+
+                expect(result.totalCount).to.equal(300);
+                expect(mockConnection.query).to.have.been.calledTwice;
+            });
+
+            it('is off by default', async () => {
+                mockConnection.query.onCall(0).resolves(fullPage());
+                mockConnection.query.onCall(1).resolves([[{ total: 500 }]]);
+
+                await dbConnector.getCacheQueryPagination('SELECT * FROM users', [], 'users', 0, 10);
+
+                const keys = mockRedis.getArrayItem.getCalls().concat(mockRedis.addArrayItem.getCalls()).map(call => call.args[0]);
+                expect(keys.some(isTotalKey)).to.be.false;
+            });
+        });
+
         describe('bulkInsert', () => {
             it('builds the same INSERT statement as before', async () => {
                 mockConnection.query.resolves([{ affectedRows: 2 }]);
@@ -478,6 +537,45 @@ describe('Performance & Resilience (v2.9.0)', () => {
                     'INSERT INTO users (id,name) VALUES (?,?),(?,?)',
                     [1, 'a', 2, 'b']
                 ]);
+            });
+
+            it('transaction: true commits all chunks together', async () => {
+                mockConnection.query.resolves([{ affectedRows: 2 }]);
+
+                const result = await dbConnector.bulkInsert('users', [1, 2, 3, 4].map(id => ({ id })), { chunkSize: 2, transaction: true });
+
+                expect(result).to.deep.equal({ insertedRows: 4, chunks: 2 });
+                expect(mockConnection.beginTransaction).to.have.been.calledBefore(mockConnection.query);
+                expect(mockConnection.commit).to.have.been.calledOnce;
+                expect(mockConnection.commit).to.have.been.calledAfter(mockConnection.query);
+            });
+
+            it('transaction: true rolls back on error and inserts nothing', async () => {
+                mockConnection.query.onCall(0).resolves([{ affectedRows: 2 }]);
+                mockConnection.query.onCall(1).rejects(Object.assign(new Error('Duplicate entry'), { code: 'ER_DUP_ENTRY' }));
+
+                try {
+                    await dbConnector.bulkInsert('users', [1, 2, 3, 4].map(id => ({ id })), { chunkSize: 2, transaction: true });
+                    expect.fail('Should have thrown');
+                } catch (error) {
+                    expect(error.code).to.equal('ER_DUP_ENTRY');
+                }
+                expect(mockConnection.rollback).to.have.been.calledOnce;
+                expect(mockConnection.commit).to.not.have.been.called;
+            });
+
+            it('transaction: true starts over after a connection error (the attempt was rolled back)', async function () {
+                this.timeout(5000);
+                const lost = Object.assign(new Error('Connection lost'), { code: 'PROTOCOL_CONNECTION_LOST' });
+                mockConnection.query.onCall(0).resolves([{ affectedRows: 2 }]);
+                mockConnection.query.onCall(1).rejects(lost);
+                mockConnection.query.resolves([{ affectedRows: 2 }]);
+
+                const result = await dbConnector.bulkInsert('users', [1, 2, 3, 4].map(id => ({ id })), { chunkSize: 2, transaction: true });
+
+                expect(result).to.deep.equal({ insertedRows: 4, chunks: 2 });
+                expect(mockConnection.query.getCalls().map(call => call.args[1])).to.deep.equal([[1, 2], [3, 4], [1, 2], [3, 4]]);
+                expect(mockConnection.beginTransaction).to.have.been.calledTwice;
             });
 
             it('resumes at the first unacknowledged chunk after a connection error', async function () {

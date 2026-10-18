@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const db = require('mysql2/promise');
 const { getArrayItem, addArrayItem, delPrefixKeyItem } = require('./redis.Connector');
 const { generateCacheKey, isAutoKeyEnabled } = require('./core/autoKey');
@@ -215,11 +216,27 @@ function autoCacheKey(sql, parameters, database) {
     return database ? `${key}@${database}` : key;
 }
 
+/**
+ * Identifies one paginated query (database, SQL and parameters) for DB_PAGINATION_REUSE_TOTAL.
+ */
+function paginationTotalHash(database, sql, parameters) {
+    let params;
+    try {
+        params = JSON.stringify(parameters === undefined ? null : parameters);
+    } catch (_) {
+        params = String(parameters);
+    }
+    return crypto.createHash('md5').update(`${database || ''}\u0000${sql}\u0000${params}`).digest('hex').substring(0, 16);
+}
+
 // ── Request coalescing ──────────────────────────────────────────
 // Concurrent cache misses for the same cache key, database, SQL and parameters share one
 // database query (and one cache write) instead of each running it. Every caller still gets
 // its own copy of the result, with the same types a query of its own would have returned.
 const COALESCING = env.DB_COALESCE_QUERIES !== 'false';
+// Opt-in: reuse a page's COUNT(*) total for the other pages of the same query (until the cache
+// name is invalidated), instead of counting again on every page miss
+const REUSE_PAGINATION_TOTAL = env.DB_PAGINATION_REUSE_TOTAL === 'true';
 const inflightLoads = new Map();
 
 // Only single, plain SELECT statements are shared; anything that might write runs per caller
@@ -534,6 +551,19 @@ module.exports = {
             const offset = validPage * validPageSize;
 
             return loadOnce(coalescingKey(uniqueCacheKey, db, cleanSql, parameters), async () => {
+                // DB_PAGINATION_REUSE_TOTAL: total stored under the cache name, so invalidating
+                // the cache name clears it together with the pages
+                const totalKey = REDIS_ENABLED && REUSE_PAGINATION_TOTAL
+                    ? `${cacheName}:total:${paginationTotalHash(db, cleanSql, parameters)}`
+                    : null;
+                let storedTotal = null;
+                if (totalKey) {
+                    const stored = await getArrayItem(totalKey);
+                    if (Array.isArray(stored) && stored.length === 1 && Number.isInteger(stored[0])) {
+                        storedTotal = stored[0];
+                    }
+                }
+
                 let totalCount;
                 let data;
                 const connection = await con.getConnection();
@@ -549,6 +579,8 @@ module.exports = {
                     // COUNT query can be skipped (small result sets need a single query)
                     if (Array.isArray(data) && data.length < validPageSize && (data.length > 0 || offset === 0)) {
                         totalCount = offset + data.length;
+                    } else if (storedTotal !== null && data.length > 0 && storedTotal >= offset + data.length) {
+                        totalCount = storedTotal;
                     } else {
                         totalCount = await countRows(connection, cleanSql, parameters);
                     }
@@ -565,6 +597,9 @@ module.exports = {
 
                 if (REDIS_ENABLED) {
                     await addArrayItem(uniqueCacheKey, result);
+                    if (totalKey && totalCount !== storedTotal) {
+                        await addArrayItem(totalKey, [totalCount]);
+                    }
                 }
 
                 return result;
@@ -577,15 +612,17 @@ module.exports = {
      * Automatically splits large datasets into chunks to prevent memory issues.
      * If a connection error interrupts the insert, the retry resumes at the first chunk that
      * was not acknowledged instead of inserting the already committed chunks again.
+     * With `transaction: true` all chunks are committed together (all or nothing), which is also
+     * faster for large inserts; a retry then starts over, as the failed attempt was rolled back.
      *
      * @param {string} table - The table name to insert into.
      * @param {Array} records - Array of objects with column-value pairs.
-     * @param {Object} options - Optional settings: { database, chunkSize, resetCacheName }
+     * @param {Object} options - Optional settings: { database, chunkSize, resetCacheName, transaction }
      * @returns {Promise<Object>} - A promise that resolves with insert statistics.
      * @throws {Error} - If an error occurs during the bulk insert.
      */
     async bulkInsert(table, records, options = {}) {
-        const { database = null, chunkSize = 1000, resetCacheName = null } = options;
+        const { database = null, chunkSize = 1000, resetCacheName = null, transaction = false } = options;
 
         if (!records || records.length === 0) {
             return { insertedRows: 0, chunks: 0 };
@@ -605,6 +642,12 @@ module.exports = {
             try {
                 await selectDatabase(connection, db);
                 trackCallerSql(connection, insertPrefix);
+                if (transaction) {
+                    nextIndex = 0;
+                    totalInserted = 0;
+                    chunks = 0;
+                    await connection.beginTransaction();
+                }
 
                 // Process in chunks
                 for (; nextIndex < records.length; nextIndex += chunkSize) {
@@ -622,6 +665,17 @@ module.exports = {
                     totalInserted += result.affectedRows;
                     chunks++;
                 }
+
+                if (transaction) await connection.commit();
+            } catch (err) {
+                if (transaction) {
+                    try {
+                        await connection.rollback();
+                    } catch (_) {
+                        // the connection is gone; the server rolls the transaction back itself
+                    }
+                }
+                throw err;
             } finally {
                 connection.release();
             }
