@@ -33,6 +33,18 @@ function bigIntReplacer(name, value) {
 }
 
 /**
+ * JSON of the parameters for hashing. The replacer is only used when plain JSON.stringify
+ * throws (a replacer function takes V8 off its fast path for every other call).
+ */
+function serializeParameters(parameters) {
+    try {
+        return JSON.stringify(parameters);
+    } catch (_) {
+        return JSON.stringify(parameters, bigIntReplacer);
+    }
+}
+
+/**
  * Creates a short hash from parameters
  * @param {Array} parameters - Query parameters
  * @returns {string} - 8-character hash
@@ -44,7 +56,7 @@ function createParameterHash(parameters) {
 
     return crypto
         .createHash('md5')
-        .update(JSON.stringify(parameters, bigIntReplacer))
+        .update(serializeParameters(parameters))
         .digest('hex')
         .substring(0, 8);
 }
