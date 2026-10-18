@@ -21,6 +21,7 @@ Complete API documentation for all functions.
   - [addArrayItem](#addarrayitem)
   - [delKeyItem](#delkeyitem)
   - [delPrefixKeyItem](#delprefixkeyitem)
+  - [isRedisConnected](#isredisconnected)
   - [getRedisClient](#getredisclient)
 - [Configuration](#configuration)
   - [configure](#configure)
@@ -40,7 +41,7 @@ Execute a SELECT query with automatic Redis caching.
 ```typescript
 getCacheQuery<T = any>(
     sql: string,
-    parameters: any[],
+    parameters?: any[],
     cacheName?: string | null,
     database?: string | null
 ): Promise<T[]>
@@ -49,13 +50,27 @@ getCacheQuery<T = any>(
 #### Parameters
 
 - `sql` (string): SQL SELECT query
-- `parameters` (any[]): Query parameters (use `?` placeholders)
+- `parameters` (any[], optional): Query parameters (use `?` placeholders)
 - `cacheName` (string | null, optional): Cache key. Auto-generated if `CORE_AUTO_FEATURES=true`
+  (or `enableAutoKey()`); otherwise the call throws `cacheName is required...`
 - `database` (string | null, optional): Database name to switch to
 
 #### Returns
 
 Promise resolving to array of query results
+
+#### Notes
+
+- Results are cached for 40000 s. Empty results are not served from the cache, and since v2.9.1 not
+  written to it; a cached value that is not a non-empty array is treated as a miss.
+- A cache hit is a JSON round trip: a `Date` comes back as an ISO string and a `Buffer` as
+  `{ type, data }`, while a miss returns mysql2's types.
+- Concurrent misses for the same key, database, SQL and parameters share one query
+  (`DB_COALESCE_QUERIES`). Since v2.9.1 a caller that has waited `DB_COALESCE_MAX_WAIT` ms (default
+  10000) starts its own query, but still takes the shared result if that arrives first; an
+  `ER_QUERY_TIMEOUT` error of the shared query (`MAX_EXECUTION_TIME`) goes to every caller waiting on it.
+- Since v2.9.1 a read that started before an invalidation in the same process does not write its
+  possibly stale result to the cache. Across processes a short window remains.
 
 #### Examples
 
@@ -90,7 +105,8 @@ interface User {
 
 const users = await getCacheQuery<User>(
     'SELECT * FROM users WHERE id = ?',
-    [123]
+    [123],
+    'user:123'
 );
 ```
 
@@ -105,43 +121,56 @@ try {
     } else if (error.message.includes('cacheName is required')) {
         console.error('Auto key disabled, provide cacheName');
     } else {
-        console.error('Query failed:', error);
+        console.error('Query failed:', error.code, error.message);
     }
 }
 ```
+
+mysql2 errors carry `err.sql` with the parameter values filled in, so do not send whole error objects
+to logs or clients you do not trust.
 
 ---
 
 ### QuaryCache
 
-Execute INSERT/UPDATE/DELETE queries with automatic cache invalidation.
+Run a statement on MySQL without reading the cache, then invalidate cached keys. Use it for
+INSERT/UPDATE/DELETE, and for reads that must not be cached.
 
 #### Signature
 
 ```typescript
-QuaryCache(
+QuaryCache<T = QueryResult>(
     sql: string,
-    parameters: any[],
+    parameters?: any[],
     resetCacheName?: string | string[] | null,
     database?: string | null
-): Promise<any>
+): Promise<T>
 ```
 
 #### Parameters
 
-- `sql` (string): SQL query (INSERT/UPDATE/DELETE)
-- `parameters` (any[]): Query parameters
-- `resetCacheName` (string | string[] | null, optional): Cache patterns to invalidate. Auto-detected if `CORE_AUTO_FEATURES=true`
+- `sql` (string): SQL statement
+- `parameters` (any[], optional): Query parameters
+- `resetCacheName` (string | string[] | null, optional): Prefixes whose keys are deleted after the
+  statement succeeds. Without it, automatic invalidation applies if `CORE_AUTO_INVALIDATION=true`
+  (or `enableAutoInvalidation()`); a `resetCacheName` replaces the automatic patterns for the call
 - `database` (string | null, optional): Database name to switch to
+
+Prefixes are Redis glob patterns: escape `*`, `?`, `[`, `]` and `\` in any user-supplied part. An
+empty prefix without `REDIS_VHOST` deletes every key in that Redis database.
 
 #### Returns
 
-Promise resolving to query result (insertId, affectedRows, etc.)
+Promise resolving to the mysql2 result: rows for a `SELECT`, or `{ insertId, affectedRows, ... }`
+for a write. In TypeScript, pass the type for reads: `QuaryCache<User[]>('SELECT ...', [id])`.
+
+The statement is retried after connection errors (see the README's Failure handling), so a write
+can run twice: make writes idempotent.
 
 #### Examples
 
 ```javascript
-// Auto invalidation (requires CORE_AUTO_FEATURES=true)
+// Auto invalidation (requires CORE_AUTO_INVALIDATION=true)
 const result = await QuaryCache(
     'INSERT INTO users (name, email) VALUES (?, ?)',
     ['John', 'john@example.com']
@@ -184,13 +213,17 @@ bounds the count. Concurrent cache misses for the same page share one database q
 `DB_PAGINATION_REUSE_TOTAL=true` the total of one page is reused for the other pages of the same
 query until `cacheName` is invalidated.
 
+Each page is cached as `<cacheName>:page<n>:size<m>`. Since v2.9.1 the `LIMIT` is appended on a new
+line, so SQL that ends with a `-- comment` paginates correctly, and a cached value is only used if it
+is a page object.
+
 #### Signature
 
 ```typescript
 getCacheQueryPagination<T = any>(
     sql: string,
     parameters: any[],
-    cacheName: string,
+    cacheName: string | null | undefined,
     page: number,
     pageSize?: number,
     database?: string | null
@@ -200,21 +233,21 @@ getCacheQueryPagination<T = any>(
 #### Parameters
 
 - `sql` (string): SQL SELECT query
-- `parameters` (any[]): Query parameters
-- `cacheName` (string): Cache key prefix
-- `page` (number): Page number (1-indexed)
-- `pageSize` (number, optional): Items per page (default: 10)
+- `parameters` (any[]): Query parameters (required, use `[]` for none)
+- `cacheName` (string | null): Cache key prefix. Since v2.9.1, without one an automatic key is used when
+  automatic keys are enabled; otherwise the result is not cached and a one-time warning is logged
+  (earlier versions shared one cache key between all such calls)
+- `page` (number): Page number, 0-based (`0` is the first page; invalid values become `0`)
+- `pageSize` (number, optional): Items per page (default: 30); must be greater than 0
 - `database` (string | null, optional): Database to switch to
 
 #### Returns
 
 ```typescript
 interface PaginationResult<T> {
-    data: T[];
-    page: number;
-    pageSize: number;
-    totalCount: number;
-    pageCount: number;
+    totalCount: number;  // rows in the whole result
+    pageCount: number;   // Math.ceil(totalCount / pageSize)
+    detail: T[];         // rows of the requested page
 }
 ```
 
@@ -222,21 +255,19 @@ interface PaginationResult<T> {
 
 ```javascript
 const result = await getCacheQueryPagination(
-    'SELECT * FROM users WHERE status = ?',
+    'SELECT * FROM users WHERE status = ? ORDER BY id',
     ['active'],
     'active-users',
-    1,  // page 1
+    0,  // first page
     20  // 20 items per page
 );
 
 console.log(result);
 /*
 {
-    data: [...],
-    page: 1,
-    pageSize: 20,
     totalCount: 157,
-    pageCount: 8
+    pageCount: 8,
+    detail: [...]   // up to 20 rows
 }
 */
 ```
@@ -251,14 +282,14 @@ Execute queries within a database transaction with automatic commit/rollback.
 
 ```typescript
 withTransaction<T = any>(
-    callback: (tx: TransactionContext) => Promise<T>,
+    callback: (tx: TransactionContext) => T | Promise<T>,
     options?: TransactionOptions
 ): Promise<T>
 ```
 
 #### Parameters
 
-- `callback` (function): Async function receiving transaction context
+- `callback` (function): Function (usually async) receiving the transaction context
 - `options` (object, optional):
   - `database` (string | null): Database to switch to
 
@@ -266,8 +297,8 @@ withTransaction<T = any>(
 
 ```typescript
 interface TransactionContext {
-    query<T>(sql: string, parameters: any[], resetCacheName?: string | string[] | null): Promise<T>;
-    getCacheQuery<T>(sql: string, parameters: any[], cacheName?: string | null): Promise<T[]>;
+    query<T>(sql: string, parameters?: any[], resetCacheName?: string | string[] | null): Promise<T>;
+    getCacheQuery<T>(sql: string, parameters?: any[], cacheName?: string | null): Promise<T[]>;
     getConnection(): any;
 }
 ```
@@ -320,10 +351,11 @@ await withTransaction(async (tx) => {
         'user-123'
     );
 
-    // Update user
+    // Update user, and drop the cached row once the transaction commits
     await tx.query(
         'UPDATE users SET balance = balance + ? WHERE id = ?',
-        [100, user.id]
+        [100, user.id],
+        'user-123'
     );
 });
 ```
@@ -331,7 +363,9 @@ await withTransaction(async (tx) => {
 #### Important Notes
 
 - Cache invalidation is buffered and applied **only on commit**
-- `tx.getCacheQuery()` reads from cache but **doesn't guarantee transaction isolation**
+- `tx.getCacheQuery()` checks the cache first, so a hit **doesn't guarantee transaction isolation**
+- Since v2.9.1 `tx.getCacheQuery()` writes what it read to the cache only after the commit; nothing
+  is cached from a rolled-back transaction (v2.9.0 cached it immediately)
 - For critical reads, use `tx.query()` instead
 - Transactions auto-rollback on any error
 
@@ -355,14 +389,30 @@ bulkInsert<T = any>(
 
 #### Parameters
 
-- `table` (string): Table name
-- `records` (array): Array of objects with column-value pairs
+- `table` (string): Table name, used in the SQL as-is
+- `records` (array): Array of objects with column-value pairs. The columns are the keys of the first
+  record, used in the SQL as-is; later records are read for those columns only (a missing key is
+  inserted as `NULL`, extra keys are ignored)
 - `options` (object, optional):
   - `chunkSize` (number): Records per chunk (default: 1000)
   - `database` (string | null): Database to switch to
-  - `resetCacheName` (string | null): Cache pattern to invalidate
+  - `resetCacheName` (string | string[] | null): Prefixes to invalidate after the insert
   - `transaction` (boolean, v2.9.0): insert all chunks in one transaction, all or nothing
     (default: false, each chunk commits on its own as before)
+
+#### Notes
+
+- **Never pass untrusted keys.** Map request or CSV input onto a fixed list of columns. Since v2.9.1
+  an invalid table or column name is rejected before anything is sent, with a `TypeError`:
+  `bulkInsert: invalid table name "<name>"` or `bulkInsert: invalid column name "<name>"`. Valid names
+  are unchanged.
+- **Invalidation:** `resetCacheName` prefixes are deleted after the insert. Since v2.9.1, without
+  `resetCacheName`, auto-invalidation (`CORE_AUTO_INVALIDATION` / `enableAutoInvalidation`) also applies
+  to `bulkInsert`, and invalidation also runs when the insert fails after rows may have been written.
+- **Retries:** after a connection error the insert is retried from the first chunk that was not
+  acknowledged, so a chunk whose acknowledgement was lost can be inserted twice. With
+  `transaction: true` a retry starts over; an error from `COMMIT` is not retried and carries
+  `err.commitOutcomeUnknown = true` (since v2.9.1), because the rows may or may not have been written.
 
 #### Returns
 
@@ -403,8 +453,8 @@ Execute query with timeout protection.
 ```typescript
 getCacheQueryWithTimeout<T = any>(
     sql: string,
-    parameters: any[],
-    cacheName: string,
+    parameters?: any[],
+    cacheName?: string | null,
     options?: QueryTimeoutOptions
 ): Promise<T[]>
 ```
@@ -412,8 +462,10 @@ getCacheQueryWithTimeout<T = any>(
 #### Parameters
 
 - `sql` (string): SQL query
-- `parameters` (any[]): Query parameters
-- `cacheName` (string): Cache key
+- `parameters` (any[], optional): Query parameters
+- `cacheName` (string | null): Cache key. Since v2.9.1, without one an automatic key is used when
+  automatic keys are enabled; otherwise the result is not cached and a one-time warning is logged
+  (earlier versions shared one cache key between all such calls)
 - `options` (object, optional):
   - `timeout` (number): Timeout in milliseconds (default: 30000)
   - `database` (string | null): Database to switch to
@@ -422,7 +474,10 @@ getCacheQueryWithTimeout<T = any>(
     its result (default: false)
 
 Since v2.9.0 a call whose timeout fires before its query started (e.g. while waiting for a pool
-connection) no longer runs the query afterwards.
+connection) no longer runs the query afterwards; since v2.9.1 this also holds when the timeout fires
+while the call switches to `database`. With `cancelOnTimeout`, since v2.9.1 the connection whose query
+was killed is discarded instead of being returned to the pool, and at most 4 cancellations run at
+once.
 
 #### Returns
 
@@ -452,7 +507,8 @@ try {
 
 ### closeConnections
 
-Gracefully close all database connections.
+Gracefully close the MySQL connection pool. New queries are rejected afterwards. The Redis client is
+not closed: quit it yourself when Redis is enabled, or its open connection keeps the process alive.
 
 #### Signature
 
@@ -463,16 +519,23 @@ closeConnections(): Promise<void>
 #### Examples
 
 ```javascript
+const { closeConnections, getRedisClient } = require('sqlcache');
+
+async function shutdown() {
+    await closeConnections();
+    if (process.env.REDIS_ENABLED !== 'false') getRedisClient().quit();
+}
+
 // In app shutdown
 process.on('SIGTERM', async () => {
     console.log('Shutting down...');
-    await closeConnections();
+    await shutdown();
     process.exit(0);
 });
 
 // In tests
 after(async () => {
-    await closeConnections();
+    await shutdown();
 });
 ```
 
@@ -513,11 +576,12 @@ console.log(stats);
 }
 */
 
-// Monitor pool usage
+// Monitor pool usage. Connections are opened on demand (an idle pool reports 0 of 0),
+// so requests waiting for a connection are what shows an exhausted pool.
 setInterval(() => {
     const stats = getPoolStats();
-    if (stats.activeConnections === stats.totalConnections) {
-        console.warn('Connection pool exhausted!');
+    if (stats.queuedRequests > 0) {
+        console.warn('Connection pool exhausted: requests are waiting for a connection');
     }
 }, 60000);
 ```
@@ -609,6 +673,9 @@ and deletes while scanning; several prefixes are scanned concurrently, and prefi
 one pass (e.g. `users_` and `users:`) are merged. Waits like `delKeyItem`, and invalidations missed
 during an outage are replayed when Redis is ready again.
 
+Prefixes are Redis glob patterns (`*` is appended): escape `*`, `?`, `[`, `]` and `\` in any
+user-supplied part. An empty prefix without `REDIS_VHOST` deletes every key in that Redis database.
+
 #### Signature
 
 ```typescript
@@ -623,6 +690,27 @@ await delPrefixKeyItem('users_');
 
 // Multiple patterns
 await delPrefixKeyItem(['users_', 'profiles_', 'sessions_']);
+```
+
+---
+
+### isRedisConnected
+
+Check whether the Redis connection is ready, for health checks. Since v2.9.1 it returns `false`
+without opening a connection when `REDIS_ENABLED=false` (v2.9.0 opened one on the first call).
+
+#### Signature
+
+```typescript
+isRedisConnected(): boolean
+```
+
+#### Examples
+
+```javascript
+app.get('/health', (req, res) => {
+    res.json({ redis: isRedisConnected() });
+});
 ```
 
 ---
@@ -656,22 +744,25 @@ Configure all v2.6.0 features at once.
 #### Signature
 
 ```typescript
-configure(config?: CoreConfig): void
+configure(config?: ConfigureOptions): void
 ```
 
 #### Parameters
 
 ```typescript
-interface CoreConfig {
-    autoKey?: {
+interface ConfigureOptions {
+    autoKey?: boolean | {
         enabled?: boolean;
     };
-    autoInvalidation?: {
+    autoInvalidation?: boolean | {
         enabled?: boolean;
         tables?: Record<string, string | string[]>;
     };
 }
 ```
+
+Each option is passed to `enableAutoKey` / `enableAutoInvalidation`. `{ enabled: false }` turns the
+feature off, and since v2.9.1 so does `false` (earlier versions turned it on for `false`).
 
 #### Examples
 
@@ -683,23 +774,26 @@ configure({
     autoInvalidation: {
         enabled: true,
         tables: {
-            users: ['users_*', 'profiles_*'],
-            orders: ['orders_*', 'cart_*']
+            users: ['users:*', 'users_*', 'profiles_*'],
+            orders: ['orders:*', 'orders_*', 'cart_*']
         }
     }
 });
 ```
 
+A `tables` rule replaces the default `<table>_*` and `<table>:*` patterns for that table; keep
+`<table>:*` when you use automatic keys, which start with `<table>:`.
+
 ---
 
 ### enableAutoKey
 
-Enable automatic cache key generation.
+Enable automatic cache key generation, used when a call has no cache name.
 
 #### Signature
 
 ```typescript
-enableAutoKey(config?: AutoKeyConfig): void
+enableAutoKey(config?: AutoKeyConfig | boolean): void
 ```
 
 #### Examples
@@ -708,7 +802,11 @@ enableAutoKey(config?: AutoKeyConfig): void
 const { enableAutoKey } = require('sqlcache');
 
 enableAutoKey({ enabled: true });
+enableAutoKey(false); // turns it off (v2.9.1; earlier versions turned it on)
 ```
+
+Since v2.9.1 queries without a detectable table (`CALL`, `SELECT fn(?)`) get the key
+`query:<sqlhash>:<paramhash>`, and `BigInt` parameters no longer throw.
 
 ---
 
@@ -719,7 +817,7 @@ Enable automatic cache invalidation.
 #### Signature
 
 ```typescript
-enableAutoInvalidation(config?: AutoInvalidationConfig): void
+enableAutoInvalidation(config?: AutoInvalidationConfig | boolean): void
 ```
 
 #### Examples
@@ -730,10 +828,12 @@ const { enableAutoInvalidation } = require('sqlcache');
 enableAutoInvalidation({
     enabled: true,
     tables: {
-        users: ['users_*', 'profiles_*'],
-        orders: 'orders_*'
+        users: ['users:*', 'users_*', 'profiles_*'],
+        orders: ['orders:*', 'orders_*']
     }
 });
+
+enableAutoInvalidation(false); // turns it off (v2.9.1; earlier versions turned it on)
 ```
 
 ---

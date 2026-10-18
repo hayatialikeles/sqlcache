@@ -1,10 +1,14 @@
 # Configuration Guide
 
-Complete configuration reference for MySQL Redis Cache Connector.
+Complete configuration reference for sqlcache.
 
 ---
 
 ## Environment Variables
+
+sqlcache reads its settings from `process.env` when it is first required. It loads `.env` from the
+working directory (only that file, and `${VAR}` references are not expanded); variables already set
+in the environment take precedence. A commented template is in `node_modules/sqlcache/.env.example`.
 
 ### Required Configuration
 
@@ -12,12 +16,10 @@ Complete configuration reference for MySQL Redis Cache Connector.
 # MySQL Database
 DB_HOST=localhost              # MySQL host
 DB_USERNAME=root               # MySQL username
-DB_PASSWORD=secret             # MySQL password
 DB_NAME=mydb                   # Database name
 
-# Redis Cache
+# Redis Cache (required unless REDIS_ENABLED=false)
 REDIS_SERVER=localhost         # Redis host
-REDIS_PORT=6379               # Redis port
 ```
 
 ### Optional Configuration
@@ -25,23 +27,33 @@ REDIS_PORT=6379               # Redis port
 #### Database Settings
 
 ```bash
+DB_PASSWORD=secret                    # MySQL password (default: empty)
 DB_PORT=3306                          # MySQL port (default: 3306)
-DB_CONNECTION_LIMIT=10                # Max connections in pool (default: 151)
+DB_CONNECTION_LIMIT=10                # Max connections in pool, per process (default: 151)
 DB_QUEUE_LIMIT=0                      # Max queued requests (default: 0 = unlimited)
 DB_CONNECT_TIMEOUT=10000              # Connection timeout in ms (default: 10000)
-DB_MULTIPLE_STATEMENTS=false          # Allow multiple statements (default: true, for backward compatibility)
+DB_MULTIPLE_STATEMENTS=false          # Allow multiple statements (default: true, for backward compatibility; false is recommended for new projects)
 DB_COALESCE_QUERIES=true              # Concurrent identical cache misses share one query (default: true)
+DB_COALESCE_MAX_WAIT=10000            # Max wait (ms) for such a shared query before running a fresh one (default: 10000, v2.9.1)
 DB_PAGINATION_REUSE_TOTAL=false       # Reuse a query's pagination total across pages (default: false)
 DB_MAX_IDLE=10                        # Idle connections kept in the pool (default: 10)
 DB_IDLE_TIMEOUT=60000                 # Idle time (ms) before connections above DB_MAX_IDLE close (default: 60000)
 TIMEZONE=+00:00                       # Timezone offset (default: +00:00)
 ```
 
+`DB_MULTIPLE_STATEMENTS=true` lets an SQL injection run additional statements; new projects should
+set it to `false` unless they send several statements in one query. The default stays `true` in 2.x.
+
+Size the pool for the whole deployment: instances × workers × `DB_CONNECTION_LIMIT`, plus any other
+clients, must stay below MySQL's `max_connections`. MySQL's default `max_connections` is 151, the same
+as sqlcache's default limit, so a second process with default settings can already exceed it.
+
 #### Redis Settings
 
 ```bash
+REDIS_PORT=6379                       # Redis port (default: 6379)
 REDIS_PASSWORD=secret                 # Redis password (if required)
-REDIS_VHOST=my_app                    # Redis key namespace/prefix
+REDIS_VHOST=my_app                    # Redis key namespace/prefix, keys become my_app:<key> (set once per process)
 REDIS_ENABLED=true                    # Enable/disable Redis (default: true)
 ```
 
@@ -61,17 +73,24 @@ replayed once it is ready again. See [MIGRATION.md](MIGRATION.md#v28x--v290-perf
 for the full list of v2.9.0 changes and how to restore v2.8.x behavior.
 
 With `REDIS_ENABLED=false` no Redis connection is opened unless a Redis function
-(`getArrayItem`, `getRedisClient`, ...) is called directly.
+(`getArrayItem`, `getRedisClient`, ...) is called directly. Since v2.9.1 `isRedisConnected()` then
+returns `false` without opening one.
+
+`REDIS_VHOST` applies to the whole process. Changing it at runtime (for example per tenant request)
+mixes the cache entries of concurrent requests; v2.9.1 logs a one-time warning when it changes.
+
+Redis is a trusted store: cached rows are returned as stored. Protect it with AUTH
+(`REDIS_PASSWORD`) and a private network, and give each application its own `REDIS_VHOST` or Redis
+database.
 
 #### Smart Features (v2.6.0)
 
 ```bash
-# Enable all smart features
-CORE_AUTO_FEATURES=true              # Auto key + auto invalidation
-
-# Or enable individually
-CORE_AUTO_INVALIDATION=true          # Auto cache invalidation only
+CORE_AUTO_FEATURES=true              # Auto cache keys only (does not enable invalidation)
+CORE_AUTO_INVALIDATION=true          # Auto cache invalidation
 ```
+
+Set both to use automatic keys together with automatic invalidation.
 
 ---
 
@@ -89,13 +108,16 @@ configure({
     autoInvalidation: {
         enabled: true,
         tables: {
-            users: ['users_*', 'profiles_*', 'sessions_*'],
-            orders: ['orders_*', 'cart_*', 'analytics_*'],
-            products: ['products_*', 'catalog_*']
+            users: ['users:*', 'users_*', 'profiles_*', 'sessions_*'],
+            orders: ['orders:*', 'orders_*', 'cart_*', 'analytics_*'],
+            products: ['products:*', 'products_*', 'catalog_*']
         }
     }
 });
 ```
+
+A `tables` rule replaces the default `<table>_*` and `<table>:*` patterns for that table. Automatic
+keys start with `<table>:`, so keep `<table>:*` in the rule when you use them.
 
 ### Individual Feature Configuration
 
@@ -109,15 +131,35 @@ enableAutoKey({ enabled: true });
 enableAutoInvalidation({
     enabled: true,
     tables: {
-        users: 'users_*',
-        orders: ['orders_*', 'analytics_*']
+        users: ['users:*', 'users_*'],
+        orders: ['orders:*', 'orders_*', 'analytics_*']
     }
 });
+
+// Turn features off again (`false` works since v2.9.1; earlier versions turned the feature on for it)
+enableAutoKey(false);
+enableAutoInvalidation({ enabled: false });
 ```
+
+`enableAutoKey`, `enableAutoInvalidation` and the `autoKey` / `autoInvalidation` options of
+`configure` accept `true`/`false` as well as an options object.
 
 ---
 
 ## Configuration by Environment
+
+sqlcache itself only loads `.env`. To keep one file per environment, load it yourself before the
+first `require('sqlcache')` (with `dotenv` in your own dependencies); values that are already set
+are not overwritten by `.env`:
+
+```javascript
+require('dotenv').config({ path: `.env.${process.env.NODE_ENV}` });
+const { getCacheQuery } = require('sqlcache');
+```
+
+Secrets such as `DB_PASSWORD` and `REDIS_PASSWORD` are best set in the process environment by your
+deployment. `${VAR}` references in these files are not expanded: `DB_PASSWORD=${PROD_DB_PASSWORD}`
+would be used literally.
 
 ### Development
 
@@ -131,43 +173,47 @@ DB_CONNECTION_LIMIT=5
 REDIS_SERVER=localhost
 REDIS_PORT=6379
 CORE_AUTO_FEATURES=true
+CORE_AUTO_INVALIDATION=true
 ```
 
 ### Staging
 
 ```bash
-# .env.staging
+# .env.staging (DB_PASSWORD and REDIS_PASSWORD come from the environment)
 DB_HOST=staging-db.example.com
 DB_USERNAME=app_user
-DB_PASSWORD=${STAGING_DB_PASSWORD}
 DB_NAME=myapp_staging
 DB_CONNECTION_LIMIT=20
+DB_MULTIPLE_STATEMENTS=false
 REDIS_SERVER=staging-redis.example.com
 REDIS_PORT=6379
-REDIS_PASSWORD=${STAGING_REDIS_PASSWORD}
 CORE_AUTO_FEATURES=true
+CORE_AUTO_INVALIDATION=true
 ```
 
 ### Production
 
 ```bash
-# .env.production
+# .env.production (DB_PASSWORD and REDIS_PASSWORD come from the environment)
 DB_HOST=prod-db.example.com
 DB_USERNAME=app_user
-DB_PASSWORD=${PROD_DB_PASSWORD}
 DB_NAME=myapp_prod
 DB_CONNECTION_LIMIT=50
 DB_CONNECT_TIMEOUT=5000
+DB_MULTIPLE_STATEMENTS=false
 REDIS_SERVER=prod-redis.example.com
 REDIS_PORT=6379
-REDIS_PASSWORD=${PROD_REDIS_PASSWORD}
 REDIS_VHOST=myapp_prod
 CORE_AUTO_FEATURES=true
+CORE_AUTO_INVALIDATION=true
 ```
 
 ---
 
 ## Connection Pool Tuning
+
+The limits below are per process. Multiply by the number of instances and workers, add other
+clients, and keep the sum below MySQL's `max_connections` (default 151).
 
 ### Small Application (< 100 concurrent users)
 
@@ -207,8 +253,10 @@ DB_MAX_IDLE=50
 
 ### Large Result Sets and Deep Pages
 
-- Cached results are stored as JSON: about 10 ms to serialize and 4 ms to parse per 10,000 rows of
-  a typical 10-column table, so prefer `getCacheQueryPagination` over caching very large results.
+- Cached results are stored as JSON, and serializing and parsing grow with the number of rows (see
+  the README's Performance section), so prefer `getCacheQueryPagination` over caching very large
+  results. On a cache hit a `Date` is an ISO string and a `Buffer` is `{ type, data }`, while a miss
+  returns mysql2's types; normalize such columns in your code.
 - Pagination uses `LIMIT offset, size`; MySQL reads and skips `offset` rows, so very deep pages cost
   more. For long lists, an indexed `WHERE id > ?` (keyset) condition in the SQL stays fast at any depth.
 - `DB_PAGINATION_REUSE_TOTAL=true` avoids recounting the total on every page miss of large lists.
@@ -224,12 +272,13 @@ setInterval(() => {
         total: stats.totalConnections,
         active: stats.activeConnections,
         free: stats.freeConnections,
-        queued: stats.queuedRequests,
-        utilization: (stats.activeConnections / stats.totalConnections * 100).toFixed(2) + '%'
+        queued: stats.queuedRequests
     });
 
-    if (stats.activeConnections === stats.totalConnections) {
-        console.warn('⚠️ Connection pool exhausted!');
+    // Connections are opened on demand, so an idle pool has 0 of 0 connections in use.
+    // Requests waiting for a connection are what shows an exhausted pool.
+    if (stats.queuedRequests > 0) {
+        console.warn('⚠️ Connection pool exhausted: requests are waiting for a connection');
     }
 }, 60000); // Check every minute
 ```
@@ -267,19 +316,26 @@ When auto-invalidation is enabled, default patterns are:
 // - Clears: users:*
 ```
 
+They apply to `QuaryCache` and `tx.query` writes without a `resetCacheName`, and since v2.9.1 also to
+`bulkInsert` without one. A `resetCacheName` replaces the automatic patterns for that call.
+
 #### Custom Patterns
+
+A rule replaces the defaults for its table, so keep `{table}:*` when you use automatic keys:
 
 ```javascript
 enableAutoInvalidation({
     enabled: true,
     tables: {
         users: [
+            'users:*',        // Automatic keys
             'users_*',        // All user caches
             'profiles_*',     // User profiles
             'sessions_*',     // User sessions
             'feed:*'          // User feeds
         ],
         orders: [
+            'orders:*',
             'orders_*',
             'cart_*',
             'analytics_orders_*'
@@ -287,6 +343,9 @@ enableAutoInvalidation({
     }
 });
 ```
+
+Patterns are Redis glob patterns used as prefixes: escape `*`, `?`, `[`, `]` and `\` in any part that
+comes from user input. An empty prefix without `REDIS_VHOST` deletes every key in that Redis database.
 
 ### Disable Redis
 
@@ -296,13 +355,16 @@ REDIS_ENABLED=false
 
 ```javascript
 // Queries execute normally without caching
-const users = await getCacheQuery('SELECT * FROM users', []); 
-// No Redis involved
+const users = await getCacheQuery('SELECT * FROM users', [], 'users:all');
+// No Redis involved (a cache name is still required unless automatic keys are enabled)
 ```
 
 ---
 
 ## Auto Key Generation Strategy
+
+Automatic keys are used when a call has no cache name and `CORE_AUTO_FEATURES=true` (or
+`enableAutoKey()`) is set.
 
 ### Detailed Strategy (1-3 parameters)
 
@@ -324,6 +386,20 @@ SELECT * FROM orders WHERE a = ? AND b = ? AND c = ? AND d = ?
 orders:9f2ac12b
 ```
 
+### Other Keys
+
+- No `WHERE` clause: `<table>:all`, whatever the rest of the SQL.
+- No detectable table (`CALL ...`, `SELECT fn(?)`): `query:<sqlhash>:<paramhash>` since v2.9.1
+  (earlier versions left the parameters out).
+- Calls with a `database` argument: the key ends with `@<database>`.
+
+### Limits
+
+The select list, `ORDER BY`, `LIMIT`, literal values and joined tables are not part of the key, and
+the parameter hash is 32-bit, so different queries can share a key. Use explicit cache names for
+aggregates, joins, `LIMIT`/`ORDER BY` variants, time-relative SQL (`NOW()`, `CURDATE()`) and anything
+user-specific or sensitive.
+
 ### Manual Override
 
 ```javascript
@@ -344,11 +420,11 @@ const users = await getCacheQuery('SELECT * FROM users WHERE id = ?', [123], 'my
 # NEVER commit passwords to git
 # Use environment variables or secrets management
 
-# Good
-DB_PASSWORD=${DATABASE_PASSWORD}
-REDIS_PASSWORD=${REDIS_AUTH_TOKEN}
+# Good: set DB_PASSWORD and REDIS_PASSWORD in the process environment (e.g. container secrets);
+# they take precedence over .env. A line like DB_PASSWORD=${DATABASE_PASSWORD} in .env is
+# NOT expanded and would be used literally.
 
-# Bad
+# Bad: a real password in a committed .env file
 DB_PASSWORD=mypassword123
 ```
 
@@ -356,11 +432,29 @@ DB_PASSWORD=mypassword123
 
 ```javascript
 // ✅ Good - Use parameterized queries
-await getCacheQuery('SELECT * FROM users WHERE id = ?', [userId]);
+await getCacheQuery('SELECT * FROM users WHERE id = ?', [userId], `user:${userId}`);
 
 // ❌ Bad - String interpolation
-await getCacheQuery(`SELECT * FROM users WHERE id = ${userId}`);
+await getCacheQuery(`SELECT * FROM users WHERE id = ${userId}`, [], `user:${userId}`);
 ```
+
+- Set `DB_MULTIPLE_STATEMENTS=false` in new projects, so an injection cannot run extra statements.
+- `bulkInsert` puts the table name and the keys of the first record into the SQL as-is (v2.9.1
+  rejects invalid names before anything is sent). Map request or CSV input onto a fixed list of
+  columns; never pass untrusted keys.
+- Cache-name prefixes are Redis glob patterns: escape `*`, `?`, `[`, `]` and `\` in user input.
+
+### Redis
+
+- Redis is a trusted store: cached rows are returned as stored. Use AUTH, a private network, and a
+  `REDIS_VHOST` or Redis database of the application's own.
+- `REDIS_VHOST` is per process. Do not change it per request; for tenants, pass the tenant's
+  `database` per call and put the tenant in explicit cache names.
+
+### Error Details
+
+mysql2 errors carry `err.sql` with the parameter values filled in. Do not send whole error objects to
+logs or clients you do not trust.
 
 ### Connection Limits
 
@@ -385,27 +479,37 @@ mysql -u root -p
 redis-cli ping
 ```
 
-### Pool Exhaustion
+### Too Many Connections
 
 ```bash
-# Error: Too many connections
-# Solution: Increase connection limit
+# Error: Too many connections (ER_CON_COUNT_ERROR)
+# Cause: all clients together exceed MySQL's max_connections (default 151)
+# Solution: lower DB_CONNECTION_LIMIT so that instances x workers x limit + other clients
+# stays below max_connections, or raise max_connections on the server
 
-DB_CONNECTION_LIMIT=100
+DB_CONNECTION_LIMIT=30
 ```
+
+When the pool itself is exhausted, requests wait for a free connection (`queuedRequests` in
+`getPoolStats()`), or fail once more than `DB_QUEUE_LIMIT` are waiting.
 
 ### Timeout Issues
 
 ```bash
 # Error: Query timeout exceeded
-# Solution: Increase timeout or optimize query
+# Cause: a getCacheQueryWithTimeout() call took longer than its timeout option (default 30000 ms)
+# Solution: pass a larger timeout, or optimize the query; DB_CONNECT_TIMEOUT does not affect it
+```
 
-DB_CONNECT_TIMEOUT=30000
+```javascript
+await getCacheQueryWithTimeout(sql, params, 'report:daily', { timeout: 60000 });
 ```
 
 ### Redis Outage Log Lines
 
 ```bash
+# "Redis reconnecting... (attempt 3, delay 2000ms)"
+#   One line per reconnect attempt (v2.9.1) while Redis is unreachable.
 # "Redis operation failed: Redis unavailable for 10234ms — serving cache misses without waiting until it recovers"
 #   Redis has been unreachable for REDIS_WAIT_TIMEOUT: cache reads/writes fall back immediately
 #   (once per outage). Restore the old wait-on-every-call behavior with REDIS_FAIL_FAST=false.
@@ -417,14 +521,18 @@ DB_CONNECT_TIMEOUT=30000
 #   Deletes that failed during the outage are being applied now that Redis is back.
 ```
 
+Since v2.9.1 a line is also logged when more than 1000 invalidations are missed during an outage
+(only the most recent 1000 are replayed), and a one-time warning when `REDIS_VHOST` changes at
+runtime.
+
 ### Cache Issues
 
 ```bash
-# Clear all cache
+# Clear all cache (FLUSHALL deletes every key on that Redis server, not only sqlcache's)
 redis-cli FLUSHALL
 
-# Clear specific pattern
-redis-cli --scan --pattern "users_*" | xargs redis-cli DEL
+# Clear specific pattern (with REDIS_VHOST=my_app the keys start with "my_app:")
+redis-cli --scan --pattern "my_app:users_*" | xargs redis-cli DEL
 ```
 
 ---
