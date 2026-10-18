@@ -111,14 +111,26 @@ function extractColumnNames(conditions) {
     return columns.sort();
 }
 
+// SQL text is usually a constant template while parameters change per call, so everything
+// derived from the SQL alone is memoized. Bounded: the oldest entry is evicted when full.
+const SQL_ANALYSIS_CACHE_LIMIT = 1000;
+const SQL_ANALYSIS_MAX_LENGTH = 10000;
+const sqlAnalysisCache = new Map();
+
 /**
- * Generates cache key with detailed column information
+ * Parses the SQL-only parts of a cache key (memoized)
  * @param {string} sql - SQL query
- * @param {Array} parameters - Query parameters
- * @returns {string} - Generated cache key
+ * @returns {{tableName: string|null, hasConditions: boolean, columnPart: string, queryKey: string|null}}
  */
-function generateDetailedKey(sql, parameters) {
+function analyzeSql(sql) {
+    const cacheable = typeof sql === 'string' && sql.length <= SQL_ANALYSIS_MAX_LENGTH;
+    if (cacheable) {
+        const cached = sqlAnalysisCache.get(sql);
+        if (cached) return cached;
+    }
+
     const tableName = extractTableName(sql);
+    let analysis;
 
     if (!tableName) {
         // Fallback for complex queries
@@ -127,19 +139,41 @@ function generateDetailedKey(sql, parameters) {
             .update(sql)
             .digest('hex')
             .substring(0, 8);
-        return `query:${queryHash}`;
+        analysis = { tableName, hasConditions: false, columnPart: '', queryKey: `query:${queryHash}` };
+    } else {
+        const conditions = extractWhereConditions(sql);
+        const columns = conditions.length > 0 ? extractColumnNames(conditions) : [];
+        analysis = { tableName, hasConditions: conditions.length > 0, columnPart: columns.join(':'), queryKey: null };
     }
 
-    const conditions = extractWhereConditions(sql);
+    if (cacheable) {
+        if (sqlAnalysisCache.size >= SQL_ANALYSIS_CACHE_LIMIT) {
+            sqlAnalysisCache.delete(sqlAnalysisCache.keys().next().value);
+        }
+        sqlAnalysisCache.set(sql, analysis);
+    }
+    return analysis;
+}
 
-    if (conditions.length === 0) {
+/**
+ * Generates cache key with detailed column information
+ * @param {string} sql - SQL query
+ * @param {Array} parameters - Query parameters
+ * @returns {string} - Generated cache key
+ */
+function generateDetailedKey(sql, parameters) {
+    const { tableName, hasConditions, columnPart, queryKey } = analyzeSql(sql);
+
+    if (!tableName) {
+        return queryKey;
+    }
+
+    if (!hasConditions) {
         // No WHERE clause - generic cache key
         return `${tableName}:all`;
     }
 
-    const columns = extractColumnNames(conditions);
-
-    if (columns.length === 0) {
+    if (!columnPart) {
         // Complex WHERE clause without extractable columns
         const paramHash = createParameterHash(parameters);
         return `${tableName}:${paramHash}`;
@@ -147,7 +181,6 @@ function generateDetailedKey(sql, parameters) {
 
     // Build key with column names and parameter hash
     // Example: users:id:company_id:a7b3c2d1
-    const columnPart = columns.join(':');
     const paramHash = createParameterHash(parameters);
 
     return `${tableName}:${columnPart}:${paramHash}`;
@@ -160,15 +193,10 @@ function generateDetailedKey(sql, parameters) {
  * @returns {string} - Generated cache key
  */
 function generateSimpleKey(sql, parameters) {
-    const tableName = extractTableName(sql);
+    const { tableName, queryKey } = analyzeSql(sql);
 
     if (!tableName) {
-        const queryHash = crypto
-            .createHash('md5')
-            .update(sql)
-            .digest('hex')
-            .substring(0, 8);
-        return `query:${queryHash}`;
+        return queryKey;
     }
 
     const paramHash = createParameterHash(parameters);
