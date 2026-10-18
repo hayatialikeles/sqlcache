@@ -26,7 +26,7 @@ differences:
   is optional except in `getCacheQueryPagination`; the cache name may be omitted in
   `getCacheQueryWithTimeout` and passed as `null` to `getCacheQueryPagination`; a `withTransaction`
   callback may return a plain value; `configure`, `enableAutoKey` and `enableAutoInvalidation` accept
-  booleans; the definitions no longer reference `@types/node`.
+  booleans.
 
 ### Caching
 

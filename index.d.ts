@@ -4,6 +4,8 @@
  * Definitions by: Hayati Ali Keleş
  */
 
+/// <reference types="node" />
+
 declare module 'sqlcache' {
     /**
      * Result of a write statement: mysql2's ResultSetHeader (`affectedRows`, `insertId`, `info`,
