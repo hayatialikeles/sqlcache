@@ -1,5 +1,11 @@
 test-types.ts
 
+node_modules/
 coverage/
+.nyc_output/
 node_modules/.cache/
 *.backup
+
+.env
+.env.*
+!.env.example
