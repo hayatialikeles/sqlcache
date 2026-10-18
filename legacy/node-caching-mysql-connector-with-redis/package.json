@@ -26,7 +26,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hayatialikeles/sqlcache",
+    "url": "git+https://github.com/hayatialikeles/sqlcache.git",
     "directory": "legacy/node-caching-mysql-connector-with-redis"
   },
   "bugs": {
