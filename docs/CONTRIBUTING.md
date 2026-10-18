@@ -1,4 +1,4 @@
-# Contributing to MySQL Redis Cache Connector
+# Contributing to sqlcache
 
 Thank you for your interest in contributing! We welcome contributions from the community.
 
@@ -16,7 +16,7 @@ Thank you for your interest in contributing! We welcome contributions from the c
 
 ### Suggesting Features
 
-1. Check existing issues and discussions
+1. Check existing issues
 2. Create a new issue with:
    - Clear use case description
    - Why this feature is needed
@@ -29,7 +29,7 @@ Thank you for your interest in contributing! We welcome contributions from the c
    ```bash
    git clone https://github.com/YOUR_USERNAME/sqlcache.git
    cd sqlcache
-   npm install
+   npm ci
    ```
 
 2. **Create a feature branch**
@@ -47,6 +47,7 @@ Thank you for your interest in contributing! We welcome contributions from the c
    ```bash
    npm test
    npm run coverage
+   npx -p typescript@5 tsc -p test/types   # type definitions check
    ```
 
 5. **Commit your changes**
@@ -68,9 +69,8 @@ Thank you for your interest in contributing! We welcome contributions from the c
 
 ### Prerequisites
 
-- Node.js 14+ 
-- MySQL 5.7+
-- Redis 3+
+- Node.js 14+ for the package; the test suite runs in CI on Node 18, 20, 22, 24 and 26
+- For integration tests: MySQL 5.7+ (CI uses 8.0) and Redis 2.8+ (CI uses 7), in Docker
 
 ### Local Setup
 
@@ -79,23 +79,23 @@ Thank you for your interest in contributing! We welcome contributions from the c
 git clone https://github.com/hayatialikeles/sqlcache.git
 cd sqlcache
 
-# Install dependencies
-npm install
+# Install dependencies (node_modules is not committed)
+npm ci
 
-# Copy environment file
-cp .env.example .env
-
-# Edit .env with your database credentials
-nano .env
-
-# Run tests
+# Unit tests (no MySQL or Redis needed)
 npm test
 
 # Run with coverage
 npm run coverage
+
+# Type definitions check, as run in CI
+npx -p typescript@5 tsc -p test/types
 ```
 
 ### Environment Configuration
+
+Unit and integration tests set the variables they need themselves. To try the package against your
+own servers, copy `.env.example` to `.env` and edit it:
 
 ```bash
 # Database
@@ -111,7 +111,8 @@ REDIS_PORT=6379
 REDIS_PASSWORD=
 
 # Features
-CORE_AUTO_FEATURES=true
+CORE_AUTO_FEATURES=true       # automatic cache keys
+CORE_AUTO_INVALIDATION=true   # automatic invalidation
 ```
 
 ## ✅ Testing Guidelines
@@ -156,7 +157,19 @@ npm run coverage
 
 # Run specific test file
 npx mocha test/transaction.test.js
+
+# Integration tests: Redis on 127.0.0.1:6399, MySQL on 127.0.0.1:3399 (root / testpass / testdb).
+# Container commands use DOCKER_BIN (default: docker) and REDIS_CONTAINER (default: test-redis).
+INTEGRATION=1 npm test
+
+# Chaos suites (Docker containers test-redis / test-mysql)
+INTEGRATION=1 node test/chaos.test.js
+INTEGRATION=1 node test/chaos-mysql.test.js
 ```
+
+CI (`.github/workflows/ci.yml`) runs the unit tests on Node 18, 20, 22, 24 and 26, once more against
+the minimum dependency versions (mysql2 3.23.1, redis 3.1.2, dotenv 16.0.3), the type definitions
+check, and the integration tests against MySQL 8.0 and Redis 7.
 
 ## 📚 Documentation Guidelines
 
@@ -223,12 +236,10 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 ## 🐛 Debugging
 
-### Enable Debug Logs
+### Logs
 
-```javascript
-// Add to your code
-process.env.DEBUG = 'mysql-cache:*';
-```
+sqlcache has no debug switch. It logs connection events (Redis connects, reconnects and outages,
+pool shutdown) with `console.log` / `console.error`.
 
 ### Common Issues
 
@@ -243,17 +254,17 @@ redis-cli ping
 
 **Test Failures**
 ```bash
-# Clear cache
-redis-cli FLUSHALL
+# Clear the test Redis (integration tests use port 6399)
+redis-cli -p 6399 FLUSHALL
 
-# Reset test database
-mysql -u root -p test_db < schema.sql
+# The integration tests create and drop their own table (test_users) in testdb
 ```
 
 ## 📋 Checklist Before PR
 
 - [ ] All tests pass (`npm test`)
 - [ ] Coverage is >95% (`npm run coverage`)
+- [ ] Type definitions check passes (`npx -p typescript@5 tsc -p test/types`)
 - [ ] Documentation updated
 - [ ] TypeScript definitions updated
 - [ ] Commit messages follow convention
@@ -265,7 +276,7 @@ mysql -u root -p test_db < schema.sql
 (For maintainers only)
 
 1. Update version in `package.json`
-2. Update `CHANGELOG.md`
+2. Describe the changes in `docs/MIGRATION.md`
 3. Run tests: `npm test`
 4. Commit: `git commit -m "chore: release v2.x.x"`
 5. Tag: `git tag v2.x.x`
@@ -274,9 +285,8 @@ mysql -u root -p test_db < schema.sql
 
 ## 💬 Communication
 
-- **Issues**: Bug reports and feature requests
-- **Discussions**: General questions and ideas
-- **Email**: For security issues only
+- **Issues**: Bug reports, feature requests and questions
+- **Security issues**: please do not open a public issue; contact the maintainer privately
 
 ## 📜 License
 

@@ -2,6 +2,19 @@
 
 Comprehensive examples for common use cases.
 
+Most examples omit cache names and invalidation prefixes, so they assume both automatic features are
+on:
+
+```bash
+# .env
+CORE_AUTO_FEATURES=true       # automatic cache keys: cacheName may be omitted
+CORE_AUTO_INVALIDATION=true   # automatic invalidation: writes without resetCacheName clear <table>:* and <table>_*
+```
+
+Without `CORE_AUTO_FEATURES`, a call without a cache name throws `cacheName is required...`; without
+`CORE_AUTO_INVALIDATION`, a write without `resetCacheName` clears nothing. The handlers are
+Express-style, with `app`, `req` and `res` defined by your application.
+
 ---
 
 ## Table of Contents
@@ -41,11 +54,11 @@ app.post('/orders', async (req, res) => {
 
             // 2. Process each item
             for (const item of items) {
-                // Check stock
-                const [product] = await tx.getCacheQuery(
-                    'SELECT id, name, price, stock FROM products WHERE id = ?',
-                    [item.productId],
-                    `product-${item.productId}`
+                // Check stock: read and lock the row inside the transaction, never from the
+                // cache (a cached stock level can be hours old)
+                const [product] = await tx.query(
+                    'SELECT id, name, price, stock FROM products WHERE id = ? FOR UPDATE',
+                    [item.productId]
                 );
 
                 if (!product || product.stock < item.quantity) {
@@ -58,7 +71,7 @@ app.post('/orders', async (req, res) => {
                     [orderId, item.productId, item.quantity, product.price]
                 );
 
-                // Update stock
+                // Update stock (products:* and products_* are cleared after the commit)
                 await tx.query(
                     'UPDATE products SET stock = stock - ? WHERE id = ?',
                     [item.quantity, item.productId]
@@ -94,7 +107,9 @@ app.post('/orders', async (req, res) => {
 ### Product Catalog with Caching
 
 ```javascript
-// Get products by category (cached)
+// Get products by category (cached under products:category_id:status:<hash>)
+// Only the first table counts for keys and invalidation: when a category is renamed,
+// pass 'products:' as resetCacheName so these listings are refreshed.
 app.get('/products/category/:categoryId', async (req, res) => {
     const { categoryId } = req.params;
     const { page = 1, limit = 20 } = req.query;
@@ -121,7 +136,7 @@ app.put('/products/:id', async (req, res) => {
         'UPDATE products SET name = ?, price = ?, stock = ?, category_id = ? WHERE id = ?',
         [name, price, stock, category_id, id]
     );
-    // ✅ All product caches automatically cleared
+    // ✅ products:* and products_* automatically cleared (CORE_AUTO_INVALIDATION=true)
 
     res.json({ success: true });
 });
@@ -237,13 +252,16 @@ app.post('/posts/:id/like', async (req, res) => {
 ### Tenant Database Switching
 
 ```javascript
-// Middleware to get tenant database
+// Middleware to get the tenant database: take the tenant from the authenticated session
+// (set by your auth middleware) and check it against an allowlist, never from a raw header
+const TENANT_DATABASES = new Set(['tenant_1', 'tenant_2', 'tenant_3']);
+
 const getTenantDb = (req, res, next) => {
-    const tenantId = req.headers['x-tenant-id'];
-    if (!tenantId) {
-        return res.status(400).json({ error: 'Tenant ID required' });
+    const tenantDb = req.user && `tenant_${req.user.tenantId}`;
+    if (!tenantDb || !TENANT_DATABASES.has(tenantDb)) {
+        return res.status(403).json({ error: 'Unknown tenant' });
     }
-    req.tenantDb = `tenant_${tenantId}`;
+    req.tenantDb = tenantDb;
     next();
 };
 
@@ -252,7 +270,7 @@ app.get('/users', getTenantDb, async (req, res) => {
     const users = await getCacheQuery(
         'SELECT id, name, email, role, created_at FROM users WHERE status = ?',
         ['active'],
-        null,  // Auto-generated cache key
+        null,  // Auto-generated cache key, ends with @<tenant database>
         req.tenantDb  // Tenant-specific database
     );
 
@@ -278,21 +296,30 @@ app.post('/users', getTenantDb, async (req, res) => {
 
 ```javascript
 app.get('/dashboard/stats', getTenantDb, async (req, res) => {
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
     const stats = await withTransaction(async (tx) => {
-        // Get multiple stats in parallel
+        // Several stats, one after another (a transaction runs on one connection).
+        // Aggregates get explicit cache names: an automatic key would be users:all@<db>, the same
+        // as for any other query on the table without a WHERE clause. Names under the
+        // '<table>:' prefix are still cleared by automatic invalidation.
         const [userStats] = await tx.getCacheQuery(
             'SELECT COUNT(*) as total, SUM(CASE WHEN status="active" THEN 1 ELSE 0 END) as active FROM users',
-            []
+            [],
+            `users:stats@${req.tenantDb}`
         );
 
+        // The day is a parameter and part of the name, so yesterday's entry is not reused
         const [orderStats] = await tx.getCacheQuery(
-            'SELECT COUNT(*) as total, SUM(total_amount) as revenue FROM orders WHERE DATE(created_at) = CURDATE()',
-            []
+            'SELECT COUNT(*) as total, SUM(total_amount) as revenue FROM orders WHERE created_at >= ? AND created_at < ? + INTERVAL 1 DAY',
+            [today, today],
+            `orders:stats:${today}@${req.tenantDb}`
         );
 
         const [productStats] = await tx.getCacheQuery(
             'SELECT COUNT(*) as total, SUM(CASE WHEN stock < 10 THEN 1 ELSE 0 END) as low_stock FROM products',
-            []
+            [],
+            `products:stats@${req.tenantDb}`
         );
 
         return {
@@ -319,9 +346,12 @@ const { bulkInsert } = require('sqlcache');
 app.post('/analytics/events/bulk', async (req, res) => {
     const events = req.body.events; // Array of events
 
-    // Add timestamps
+    // Map each event onto a fixed set of columns: bulkInsert uses the keys of the first
+    // record as column names, so never pass request objects (or spread them) as they are
     const enrichedEvents = events.map(event => ({
-        ...event,
+        event_type: String(event.type),
+        user_id: event.userId,
+        data: JSON.stringify(event.data),
         created_at: new Date(),
         ip_address: req.ip
     }));
@@ -459,6 +489,9 @@ app.post('/chat/rooms/:roomId/read', async (req, res) => {
 ### User Registration with Transaction
 
 ```javascript
+const bcrypt = require('bcrypt'); // or another password-hashing library
+const { withTransaction } = require('sqlcache');
+
 app.post('/auth/register', async (req, res) => {
     const { email, password, name } = req.body;
 
@@ -508,16 +541,19 @@ app.post('/auth/register', async (req, res) => {
 ### Session Management
 
 ```javascript
-const { addArrayItem, getArrayItem, delKeyItem } = require('sqlcache');
+const crypto = require('crypto');
+const bcrypt = require('bcrypt');
+const { QuaryCache, addArrayItem, getArrayItem, delKeyItem } = require('sqlcache');
 
 // Create session
 app.post('/auth/login', async (req, res) => {
     const { email, password } = req.body;
 
-    const [user] = await getCacheQuery(
+    // Read credentials from MySQL, not through the cache: a cached password hash would keep an
+    // old password valid until the entry expires (QuaryCache neither reads the cache nor stores results)
+    const [user] = await QuaryCache(
         'SELECT id, email, password, name FROM users WHERE email = ?',
-        [email],
-        `user-email-${email}`
+        [email]
     );
 
     if (!user || !(await bcrypt.compare(password, user.password))) {

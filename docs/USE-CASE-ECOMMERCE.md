@@ -1,5 +1,8 @@
 # E-Commerce Use Case
 
+The writes below rely on automatic invalidation, so set `CORE_AUTO_INVALIDATION=true` (it is not
+enabled by `CORE_AUTO_FEATURES`, which only generates cache keys).
+
 ## Order Creation with Transaction
 
 ```javascript
@@ -42,7 +45,9 @@ const { getCacheQuery } = require('sqlcache');
 
 app.get('/products', async (req, res) => {
     const products = await getCacheQuery(
-        'SELECT * FROM products WHERE active = 1 ORDER BY created_at DESC'
+        'SELECT * FROM products WHERE active = 1 ORDER BY created_at DESC',
+        [],
+        'products:active' // under products:, so product writes clear it
     );
     res.json(products);
 });
@@ -64,4 +69,5 @@ app.post('/cart/add', async (req, res) => {
 
 - **Transaction**: Order + items + stock update all succeed or all fail
 - **Cache**: Product listings served from Redis
-- **Auto-invalidation**: Cart/product changes clear related cache
+- **Auto-invalidation** (`CORE_AUTO_INVALIDATION=true`): writes to `cart` and `products` clear
+  `cart:*`/`cart_*` and `products:*`/`products_*`; inside the transaction, after the commit

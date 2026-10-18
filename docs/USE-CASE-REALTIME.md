@@ -1,9 +1,14 @@
 # Real-Time Apps Use Case
 
+These examples omit cache names and invalidation prefixes, so they need both
+`CORE_AUTO_FEATURES=true` (automatic keys) and `CORE_AUTO_INVALIDATION=true` (automatic
+invalidation). Without the second, new messages would not show up until the cached list expires
+(40000 s).
+
 ## Chat Messages
 
 ```javascript
-const { getCacheQuery, QuaryCache } = require('sqlcache');
+const { getCacheQuery, QuaryCache, getArrayItem, addArrayItem } = require('sqlcache');
 
 // Get messages (cached)
 app.get('/chat/:roomId/messages', async (req, res) => {
@@ -58,7 +63,8 @@ app.post('/notifications/:id/read', async (req, res) => {
 ## Online Status
 
 ```javascript
-// Update last seen
+// Update last seen. With automatic invalidation every heartbeat clears all users:* and users_*
+// keys; if you cache other user queries, keep presence in a table of its own.
 app.post('/heartbeat', async (req, res) => {
     await QuaryCache(
         'UPDATE users SET last_seen = NOW() WHERE id = ?',
@@ -67,11 +73,17 @@ app.post('/heartbeat', async (req, res) => {
     res.json({ ok: true });
 });
 
-// Get online users (cached 30s)
+// Get online users, cached for 30 s. getCacheQuery has no per-call TTL (it caches for 40000 s),
+// so read with QuaryCache, which does not use the cache, and cache the rows by hand.
 app.get('/online', async (req, res) => {
-    const users = await getCacheQuery(
-        'SELECT id, name FROM users WHERE last_seen > DATE_SUB(NOW(), INTERVAL 5 MINUTE)'
-    );
+    let users = await getArrayItem('online-users');
+    if (users.length === 0) {
+        users = await QuaryCache(
+            'SELECT id, name FROM users WHERE last_seen > DATE_SUB(NOW(), INTERVAL 5 MINUTE)',
+            []
+        );
+        await addArrayItem('online-users', users, 30); // TTL in seconds
+    }
     res.json(users);
 });
 ```
