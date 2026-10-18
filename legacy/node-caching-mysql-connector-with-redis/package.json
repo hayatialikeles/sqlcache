@@ -1,0 +1,36 @@
+{
+  "name": "node-caching-mysql-connector-with-redis",
+  "version": "2.9.0",
+  "description": "Renamed to sqlcache. This release forwards to sqlcache so existing installs keep working.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "dbConnector.js",
+    "redis.Connector.js",
+    "core/",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "sqlcache": "^2.9.0"
+  },
+  "keywords": [
+    "sqlcache",
+    "mysql",
+    "redis",
+    "cache"
+  ],
+  "author": "Hayati Ali KELEŞ",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hayatialikeles/sqlcache",
+    "directory": "legacy/node-caching-mysql-connector-with-redis"
+  },
+  "bugs": {
+    "url": "https://github.com/hayatialikeles/sqlcache/issues"
+  },
+  "homepage": "https://github.com/hayatialikeles/sqlcache#readme"
+}
