@@ -1,12 +1,12 @@
 /**
- * Type definitions for node-caching-mysql-connector-with-redis
- * Project: https://github.com/hayatialikeles/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS
+ * Type definitions for sqlcache
+ * Project: https://github.com/hayatialikeles/sqlcache
  * Definitions by: Ali Hayati Keleş
  */
 
 /// <reference types="node" />
 
-declare module 'node-caching-mysql-connector-with-redis' {
+declare module 'sqlcache' {
     /**
      * MySQL query result type
      */
@@ -634,11 +634,11 @@ declare module 'node-caching-mysql-connector-with-redis' {
      * @example
      * ```typescript
      * // v2.4.x style (still supported)
-     * import dbConnector = require('node-caching-mysql-connector-with-redis');
+     * import dbConnector = require('sqlcache');
      * dbConnector.QuaryCache(...);
      *
      * // v2.5.0 style (recommended)
-     * import { QuaryCache, getCacheQuery } from 'node-caching-mysql-connector-with-redis';
+     * import { QuaryCache, getCacheQuery } from 'sqlcache';
      * QuaryCache(...);
      * ```
      */

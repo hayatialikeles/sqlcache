@@ -80,7 +80,7 @@ CORE_AUTO_INVALIDATION=true          # Auto cache invalidation only
 ### All-in-One Setup
 
 ```javascript
-const { configure } = require('node-caching-mysql-connector-with-redis');
+const { configure } = require('sqlcache');
 
 configure({
     autoKey: {
@@ -100,7 +100,7 @@ configure({
 ### Individual Feature Configuration
 
 ```javascript
-const { enableAutoKey, enableAutoInvalidation } = require('node-caching-mysql-connector-with-redis');
+const { enableAutoKey, enableAutoInvalidation } = require('sqlcache');
 
 // Enable auto key generation
 enableAutoKey({ enabled: true });
@@ -216,7 +216,7 @@ DB_MAX_IDLE=50
 ### Monitoring Pool Usage
 
 ```javascript
-const { getPoolStats } = require('node-caching-mysql-connector-with-redis');
+const { getPoolStats } = require('sqlcache');
 
 setInterval(() => {
     const stats = getPoolStats();
@@ -241,7 +241,7 @@ setInterval(() => {
 ### Default Cache TTL
 
 ```javascript
-const { addArrayItem } = require('node-caching-mysql-connector-with-redis');
+const { addArrayItem } = require('sqlcache');
 
 // Default TTL: 40000 seconds (~11 hours)
 await addArrayItem('my-key', data);

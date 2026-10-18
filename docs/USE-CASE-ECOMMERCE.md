@@ -3,7 +3,7 @@
 ## Order Creation with Transaction
 
 ```javascript
-const { withTransaction, QuaryCache } = require('node-caching-mysql-connector-with-redis');
+const { withTransaction, QuaryCache } = require('sqlcache');
 
 app.post('/orders', async (req, res) => {
     const { userId, items } = req.body;
@@ -38,7 +38,7 @@ app.post('/orders', async (req, res) => {
 ## Product Listing (Cached)
 
 ```javascript
-const { getCacheQuery } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQuery } = require('sqlcache');
 
 app.get('/products', async (req, res) => {
     const products = await getCacheQuery(

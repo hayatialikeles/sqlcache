@@ -3,7 +3,7 @@
 ## Import Large Dataset
 
 ```javascript
-const { bulkInsert } = require('node-caching-mysql-connector-with-redis');
+const { bulkInsert } = require('sqlcache');
 
 app.post('/import/products', async (req, res) => {
     const products = req.body.products; // 100K+ records

@@ -3,7 +3,7 @@
 ## Chat Messages
 
 ```javascript
-const { getCacheQuery, QuaryCache } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQuery, QuaryCache } = require('sqlcache');
 
 // Get messages (cached)
 app.get('/chat/:roomId/messages', async (req, res) => {

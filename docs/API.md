@@ -676,7 +676,7 @@ interface CoreConfig {
 #### Examples
 
 ```javascript
-const { configure } = require('node-caching-mysql-connector-with-redis');
+const { configure } = require('sqlcache');
 
 configure({
     autoKey: { enabled: true },
@@ -705,7 +705,7 @@ enableAutoKey(config?: AutoKeyConfig): void
 #### Examples
 
 ```javascript
-const { enableAutoKey } = require('node-caching-mysql-connector-with-redis');
+const { enableAutoKey } = require('sqlcache');
 
 enableAutoKey({ enabled: true });
 ```
@@ -725,7 +725,7 @@ enableAutoInvalidation(config?: AutoInvalidationConfig): void
 #### Examples
 
 ```javascript
-const { enableAutoInvalidation } = require('node-caching-mysql-connector-with-redis');
+const { enableAutoInvalidation } = require('sqlcache');
 
 enableAutoInvalidation({
     enabled: true,

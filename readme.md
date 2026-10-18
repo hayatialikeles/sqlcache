@@ -1,11 +1,15 @@
-# node-caching-mysql-connector-with-redis
+# sqlcache
 
-[![npm version](https://img.shields.io/npm/v/node-caching-mysql-connector-with-redis.svg)](https://www.npmjs.com/package/node-caching-mysql-connector-with-redis)
+[![npm version](https://img.shields.io/npm/v/sqlcache.svg)](https://www.npmjs.com/package/sqlcache)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 
 Read-through Redis caching for MySQL in Node.js. You run SQL through a small API and the package
 caches the results in Redis, invalidates them when you write, and keeps working when Redis or
 MySQL fail.
+
+> **Formerly `node-caching-mysql-connector-with-redis`.** The package was renamed to `sqlcache` in
+> v2.9.0. Projects that still depend on the old name keep working: its 2.9.0 release forwards to
+> `sqlcache`. See [Upgrading](#upgrading) to switch.
 
 - **Read-through cache** for `SELECT` results, with prefix-based invalidation after writes
 - **Optional automatic cache keys and invalidation**, derived from the SQL
@@ -41,7 +45,7 @@ MySQL fail.
 ## Installation
 
 ```bash
-npm install node-caching-mysql-connector-with-redis
+npm install sqlcache
 ```
 
 ## Quick start
@@ -60,7 +64,7 @@ REDIS_SERVER=localhost
 ```
 
 ```javascript
-const { getCacheQuery, QuaryCache } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQuery, QuaryCache } = require('sqlcache');
 
 // Read through the cache under the key 'user:42'
 const [user] = await getCacheQuery('SELECT * FROM users WHERE id = ?', [42], 'user:42');
@@ -120,7 +124,7 @@ const { totalCount, pageCount, detail } = await getCacheQueryPagination(
 ### Transactions
 
 ```javascript
-const { withTransaction } = require('node-caching-mysql-connector-with-redis');
+const { withTransaction } = require('sqlcache');
 
 const orderId = await withTransaction(async (tx) => {
     const { insertId } = await tx.query('INSERT INTO orders (customer_id) VALUES (?)', [7], 'orders:');
@@ -174,7 +178,7 @@ shared by all concurrent requests.
 
 ```javascript
 const { getArrayItem, addArrayItem, delKeyItem, delPrefixKeyItem, getRedisClient } =
-    require('node-caching-mysql-connector-with-redis');
+    require('sqlcache');
 
 await addArrayItem('settings', [{ theme: 'dark' }], 3600); // TTL in seconds (default 40000)
 const settings = await getArrayItem('settings');            // [] on a miss
@@ -212,7 +216,7 @@ CORE_AUTO_INVALIDATION=true   # after INSERT/UPDATE/DELETE/REPLACE, invalidate <
 You can also turn them on in code:
 
 ```javascript
-const { configure } = require('node-caching-mysql-connector-with-redis');
+const { configure } = require('sqlcache');
 
 configure({
     autoKey: { enabled: true },
@@ -299,7 +303,7 @@ Tips:
 Type definitions ship with the package:
 
 ```typescript
-import { getCacheQuery, getCacheQueryPagination } from 'node-caching-mysql-connector-with-redis';
+import { getCacheQuery, getCacheQueryPagination } from 'sqlcache';
 
 interface User { id: number; name: string; }
 
@@ -308,6 +312,20 @@ const page = await getCacheQueryPagination<User>('SELECT id, name FROM users', [
 ```
 
 ## Upgrading
+
+### From `node-caching-mysql-connector-with-redis`
+
+```bash
+npm uninstall node-caching-mysql-connector-with-redis
+npm install sqlcache
+```
+
+Then replace `require('node-caching-mysql-connector-with-redis')` and TypeScript imports from it with
+`'sqlcache'`. The API is the same. Until you switch, `npm update` moves the old name to its 2.9.0
+release, which forwards to `sqlcache`, so existing projects get the same code. The old name is
+deprecated and receives no new major versions.
+
+### From v2.8.x
 
 v2.9.0 does not change the API. [docs/MIGRATION.md](docs/MIGRATION.md#v28x--v290-performance--resilience)
 lists every behavior difference from v2.8.x and the settings that restore the old behavior.

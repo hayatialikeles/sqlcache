@@ -49,7 +49,7 @@ app.post('/users', async (req, res) => {
 ### After (With This Package)
 
 ```javascript
-const { getCacheQuery, QuaryCache } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQuery, QuaryCache } = require('sqlcache');
 
 // .env
 CORE_AUTO_FEATURES=true
@@ -93,7 +93,7 @@ const pool = mysql.createPool({
 const [users] = await pool.query('SELECT * FROM users WHERE id = ?', [123]);
 
 // After
-const { getCacheQuery } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQuery } = require('sqlcache');
 
 const users = await getCacheQuery('SELECT * FROM users WHERE id = ?', [123]);
 // ✅ Same API + automatic caching!
@@ -116,7 +116,7 @@ const knex = require('knex')({
 const users = await knex('users').where('id', 123).select('*');
 
 // After
-const { getCacheQuery } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQuery } = require('sqlcache');
 
 const users = await getCacheQuery('SELECT * FROM users WHERE id = ?', [123]);
 ```
@@ -124,6 +124,27 @@ const users = await getCacheQuery('SELECT * FROM users WHERE id = ?', [123]);
 ---
 
 ## Version Migration
+
+### Package renamed to `sqlcache` (v2.9.0)
+
+From v2.9.0 the package is published as `sqlcache`; the API is unchanged.
+
+```bash
+npm uninstall node-caching-mysql-connector-with-redis
+npm install sqlcache
+```
+
+```javascript
+// before
+const { getCacheQuery } = require('node-caching-mysql-connector-with-redis');
+// after
+const { getCacheQuery } = require('sqlcache');
+```
+
+Deep imports (`/dbConnector`, `/redis.Connector`, `/core/...`) and TypeScript imports change the same
+way. You do not have to switch right away: `node-caching-mysql-connector-with-redis@2.9.0` only
+forwards to `sqlcache@^2.9.0` (including those deep paths and the types), so `npm update` on the old
+name already runs the same code. The old name is deprecated and gets no new major versions.
 
 ### v2.8.x → v2.9.0 (performance & resilience)
 
@@ -254,10 +275,10 @@ return the same results with less work.
 
 ```javascript
 // Install
-npm install node-caching-mysql-connector-with-redis
+npm install sqlcache
 
 // Use with manual keys (no changes to existing logic)
-const { getCacheQuery, QuaryCache } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQuery, QuaryCache } = require('sqlcache');
 
 await getCacheQuery('SELECT * FROM users', [], 'users-all');
 await QuaryCache('INSERT INTO users...', [data], 'users_*');
@@ -318,7 +339,7 @@ app.get('/users', async (req, res) => {
 });
 
 // After
-const { getCacheQuery } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQuery } = require('sqlcache');
 
 app.get('/users', async (req, res) => {
     const users = await getCacheQuery('SELECT * FROM users', []);
@@ -341,7 +362,7 @@ async function processOrders() {
 }
 
 // After
-const { QuaryCache } = require('node-caching-mysql-connector-with-redis');
+const { QuaryCache } = require('sqlcache');
 
 async function processOrders() {
     const orders = await getCacheQuery('SELECT * FROM orders WHERE status = ?', ['pending']);
@@ -380,7 +401,7 @@ async function createUserWithProfile(userData, profileData) {
 }
 
 // After
-const { withTransaction } = require('node-caching-mysql-connector-with-redis');
+const { withTransaction } = require('sqlcache');
 
 async function createUserWithProfile(userData, profileData) {
     return await withTransaction(async (tx) => {
@@ -408,7 +429,7 @@ describe('User API', () => {
 });
 
 // After
-const { getCacheQuery } = require('node-caching-mysql-connector-with-redis');
+const { getCacheQuery } = require('sqlcache');
 
 describe('User API', () => {
     it('should fetch users with cache', async () => {
@@ -480,8 +501,8 @@ If you need to rollback:
 ## Support & Help
 
 - **Documentation**: [API Reference](API.md) | [Examples](EXAMPLES.md)
-- **Issues**: [GitHub Issues](https://github.com/hayatialikeles/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS/issues)
-- **Community**: [Discussions](https://github.com/hayatialikeles/NODE-CACHING-MYSQL-CONNECTOR-WITH-REDIS/discussions)
+- **Issues**: [GitHub Issues](https://github.com/hayatialikeles/sqlcache/issues)
+- **Community**: [Discussions](https://github.com/hayatialikeles/sqlcache/discussions)
 
 ---
 
