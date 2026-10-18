@@ -43,7 +43,7 @@ const { promisify } = require('util');
 const execAsync = promisify(exec);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const DOCKER = '/usr/local/bin/docker';
+const DOCKER = process.env.DOCKER_BIN || 'docker';
 
 async function docker(cmd) {
     try {

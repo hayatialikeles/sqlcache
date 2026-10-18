@@ -252,6 +252,8 @@ app.post('/posts/:id/like', async (req, res) => {
 ### Tenant Database Switching
 
 ```javascript
+const bcrypt = require('bcrypt'); // or another password-hashing library
+
 // Middleware to get the tenant database: take the tenant from the authenticated session
 // (set by your auth middleware) and check it against an allowlist, never from a raw header
 const TENANT_DATABASES = new Set(['tenant_1', 'tenant_2', 'tenant_3']);
@@ -277,13 +279,16 @@ app.get('/users', getTenantDb, async (req, res) => {
     res.json(users);
 });
 
-// Create user in tenant database
-app.post('/users', getTenantDb, async (req, res) => {
-    const { name, email, password, role } = req.body;
+// Create user in tenant database (requireAdmin: your own authorization middleware)
+app.post('/users', getTenantDb, requireAdmin, async (req, res) => {
+    const { name, email, password } = req.body;
+    // Never take a role from the request as-is, and never store a plain-text password
+    const role = ['member', 'editor'].includes(req.body.role) ? req.body.role : 'member';
+    const passwordHash = await bcrypt.hash(password, 10);
 
     const result = await QuaryCache(
         'INSERT INTO users (name, email, password, role, created_at) VALUES (?, ?, ?, ?, NOW())',
-        [name, email, password, role],
+        [name, email, passwordHash, role],
         null,  // Auto-invalidation
         req.tenantDb
     );

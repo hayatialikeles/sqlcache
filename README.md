@@ -415,7 +415,7 @@ INTEGRATION=1 node test/chaos-mysql.test.js    # MySQL chaos suite
 ```
 
 The integration tests run Docker commands through `DOCKER_BIN` (default `docker`) on the container
-named by `REDIS_CONTAINER` (default `test-redis`). CI runs the unit tests on Node 18, 20, 22, 24 and
+named by `REDIS_CONTAINER` (default `test-redis`); the chaos suites also use `DOCKER_BIN`. CI runs the unit tests on Node 18, 20, 22, 24 and
 26 and against the minimum dependency versions, plus the type check and the integration tests
 against MySQL 8.0 and Redis 7.
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for contribution guidelines.
