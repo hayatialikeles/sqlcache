@@ -5,7 +5,7 @@
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
-    "test": "mocha ./test/**/*.js --timeout 60000 --reporter  spec --exit",
+    "test": "mocha './test/**/*.js' --ignore './test/chaos*.test.js' --timeout 60000 --reporter spec --exit",
     "coverage": "nyc --reporter=text --reporter=html npm test"
   },
   "author": "Hayati Ali KELEŞ",

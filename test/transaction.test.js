@@ -4,9 +4,13 @@
  * Tests for withTransaction wrapper function
  */
 
-const { expect } = require('chai');
+const chai = require('chai');
 const sinon = require('sinon');
+const sinonChai = require('sinon-chai');
 const proxyquire = require('proxyquire');
+
+chai.use(sinonChai);
+const { expect } = chai;
 
 describe('Transactions (v2.7.0)', () => {
     let dbConnector;
