@@ -52,8 +52,11 @@ const execAsync = promisify(exec);
 // ── Helpers ──
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+const DOCKER_BIN = process.env.DOCKER_BIN || 'docker';
+const REDIS_CONTAINER = process.env.REDIS_CONTAINER || 'test-redis';
+
 async function dockerExec(cmd) {
-    const { stdout } = await execAsync(`/usr/local/bin/docker ${cmd}`);
+    const { stdout } = await execAsync(`${DOCKER_BIN} ${cmd}`);
     return stdout.trim();
 }
 
@@ -256,7 +259,7 @@ describe('Integration: Real Redis + MySQL', function () {
 
             // Stop Redis
             console.log('      Stopping Redis...');
-            await dockerExec('stop test-redis');
+            await dockerExec(`stop ${REDIS_CONTAINER}`);
             await sleep(1000);
 
             expect(isRedisConnected()).to.be.false;
@@ -267,7 +270,7 @@ describe('Integration: Real Redis + MySQL', function () {
 
             // Restart Redis
             console.log('      Starting Redis...');
-            await dockerExec('start test-redis');
+            await dockerExec(`start ${REDIS_CONTAINER}`);
 
             // Wait for reconnection
             for (let i = 0; i < 30; i++) {
@@ -298,9 +301,9 @@ describe('Integration: Real Redis + MySQL', function () {
 
             // Redis flap: stop → immediate start
             console.log('      Flapping Redis...');
-            await dockerExec('stop test-redis');
+            await dockerExec(`stop ${REDIS_CONTAINER}`);
             await sleep(200);
-            await dockerExec('start test-redis');
+            await dockerExec(`start ${REDIS_CONTAINER}`);
 
             // Rapid writes while reconnecting — should not throw
             const results = await Promise.allSettled([
@@ -336,7 +339,7 @@ describe('Integration: Real Redis + MySQL', function () {
 
             // Stop Redis
             console.log('      Stopping Redis for cache-aside test...');
-            await dockerExec('stop test-redis');
+            await dockerExec(`stop ${REDIS_CONTAINER}`);
             await sleep(1000);
 
             // getCacheQuery should still work — falls through to DB on cache failure
@@ -351,7 +354,7 @@ describe('Integration: Real Redis + MySQL', function () {
 
             // Restart Redis
             console.log('      Restarting Redis...');
-            await dockerExec('start test-redis');
+            await dockerExec(`start ${REDIS_CONTAINER}`);
             for (let i = 0; i < 30; i++) {
                 if (isRedisConnected()) break;
                 await sleep(500);
