@@ -180,6 +180,13 @@ can be switched back with an environment variable.
   instead of one failure line per call; new lines report command timeouts, reconnects of a silent
   connection, and replayed invalidations.
 
+#### New opt-in options
+
+- `DB_PAGINATION_REUSE_TOTAL=true`: count a paginated query once and reuse the total for its other
+  pages until the cache name is invalidated (totals may lag behind writes that do not invalidate it).
+- `bulkInsert(table, records, { transaction: true })`: all chunks in one transaction, all or nothing.
+- `getCacheQueryWithTimeout(..., { cancelOnTimeout: true })`: stop a timed-out query on the server.
+
 #### Restoring v2.8.x behavior
 
 ```bash
