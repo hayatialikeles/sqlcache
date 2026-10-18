@@ -283,6 +283,17 @@ describe('dbConnector', () => {
     });
 
     describe('getCacheQueryPagination', () => {
+        // Answers pagination queries by SQL shape, so tests do not depend on the order in
+        // which the page query and the COUNT(*) query run
+        function mockPaginationQueries(total, pageData) {
+            mockConnection.query.callsFake(async (sql) => {
+                if (/^USE /.test(sql)) return [[]];
+                if (/^SELECT COUNT\(\*\) AS total FROM \(/.test(sql)) return [[{ total }]];
+                return [pageData];
+            });
+        }
+        const pageQuery = () => mockConnection.query.getCalls().find(call => / LIMIT \?, \?$/.test(call.args[0]));
+
         it('should return cached pagination data if available', async () => {
             const cachedData = {
                 totalCount: 100,
@@ -308,8 +319,7 @@ describe('dbConnector', () => {
 
             const allData = Array(15).fill({ id: 1 });
             const pageData = Array(10).fill({ id: 1 });
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]); // Paginated data
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -329,8 +339,7 @@ describe('dbConnector', () => {
             const pageData = allData.slice(0, 10);
 
             getArrayItemStub.resolves([]);
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]); // Paginated data
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -386,9 +395,7 @@ describe('dbConnector', () => {
             const allData = [{ id: 1 }, { id: 2 }];
             const pageData = [{ id: 1 }];
 
-            mockConnection.query.onCall(0).resolves(); // USE database
-            mockConnection.query.onCall(1).resolves([allData]); // Full data for count
-            mockConnection.query.onCall(2).resolves([pageData]); // Paginated data
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             await dbConnector.getCacheQueryPagination(
@@ -405,8 +412,7 @@ describe('dbConnector', () => {
 
         it('should calculate pageCount correctly', async () => {
             getArrayItemStub.resolves([]);
-            mockConnection.query.onFirstCall().resolves([Array(25).fill({ id: 1 })]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([Array(10).fill({ id: 1 })]);
+            mockPaginationQueries(25, Array(10).fill({ id: 1 }));
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -430,8 +436,7 @@ describe('dbConnector', () => {
 
             const allData = Array(25).fill({ id: 1 });
             const pageData = Array(10).fill({ id: 1 });
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]);
+            mockPaginationQueries(allData.length, pageData);
 
             const result = await dbConnector.getCacheQueryPagination(
                 'SELECT * FROM users',
@@ -452,8 +457,7 @@ describe('dbConnector', () => {
             const allData = Array.from({ length: 30 }, (_, i) => ({ id: i + 1 }));
             const pageData = allData.slice(0, 10);
 
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]);
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -469,9 +473,9 @@ describe('dbConnector', () => {
             expect(result.detail).to.deep.equal(pageData);
 
             // Verify that the paginated SQL doesn't have syntax errors
-            const secondCallArgs = mockConnection.query.secondCall.args[0];
-            expect(secondCallArgs).to.not.include(';;'); // Should not have double semicolons
-            expect(secondCallArgs).to.include('LIMIT');
+            const pageSql = pageQuery().args[0];
+            expect(pageSql).to.not.include(';;'); // Should not have double semicolons
+            expect(pageSql).to.include('LIMIT');
         });
 
         it('should handle SQL with multiple trailing semicolons', async () => {
@@ -479,8 +483,7 @@ describe('dbConnector', () => {
             const allData = Array.from({ length: 15 }, (_, i) => ({ id: i + 1 }));
             const pageData = allData.slice(10, 15);
 
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]);
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -495,9 +498,9 @@ describe('dbConnector', () => {
             expect(result.pageCount).to.equal(2);
 
             // Verify clean SQL - with parameterized LIMIT, SQL ends with LIMIT ?, ?
-            const secondCallArgs = mockConnection.query.secondCall.args[0];
-            expect(secondCallArgs).to.include('LIMIT ?, ?');
-            expect(secondCallArgs).to.not.match(/;/); // Should not have semicolons
+            const pageSql = pageQuery().args[0];
+            expect(pageSql).to.include('LIMIT ?, ?');
+            expect(pageSql).to.not.match(/;/); // Should not have semicolons
         });
 
         it('should handle SQL with trailing semicolon and whitespace', async () => {
@@ -505,8 +508,7 @@ describe('dbConnector', () => {
             const allData = Array.from({ length: 20 }, (_, i) => ({ id: i + 1 }));
             const pageData = allData.slice(0, 5);
 
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]);
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -522,9 +524,9 @@ describe('dbConnector', () => {
             expect(result.detail.length).to.equal(5);
 
             // Verify clean SQL - with parameterized LIMIT
-            const secondCallArgs = mockConnection.query.secondCall.args[0];
-            expect(secondCallArgs).to.include('LIMIT ?, ?');
-            expect(secondCallArgs).to.not.match(/;\s*$/); // Should not end with semicolon
+            const pageSql = pageQuery().args[0];
+            expect(pageSql).to.include('LIMIT ?, ?');
+            expect(pageSql).to.not.match(/;\s*$/); // Should not end with semicolon
         });
 
         it('should handle complex SQL with ORDER BY and semicolon', async () => {
@@ -532,8 +534,7 @@ describe('dbConnector', () => {
             const allData = Array.from({ length: 50 }, (_, i) => ({ id: i + 1, name: `User${i}` }));
             const pageData = allData.slice(20, 30);
 
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]);
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -548,9 +549,9 @@ describe('dbConnector', () => {
             expect(result.pageCount).to.equal(5);
 
             // Verify SQL structure: ORDER BY comes before LIMIT
-            const secondCallArgs = mockConnection.query.secondCall.args[0];
-            expect(secondCallArgs).to.match(/ORDER BY.*LIMIT/); // ORDER BY before LIMIT
-            expect(secondCallArgs).to.include('LIMIT ?, ?');
+            const pageSql = pageQuery().args[0];
+            expect(pageSql).to.match(/ORDER BY.*LIMIT/); // ORDER BY before LIMIT
+            expect(pageSql).to.include('LIMIT ?, ?');
         });
 
         it('should handle undefined page parameter (default to 0)', async () => {
@@ -558,8 +559,7 @@ describe('dbConnector', () => {
             const allData = Array.from({ length: 30 }, (_, i) => ({ id: i + 1 }));
             const pageData = allData.slice(0, 10);
 
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]);
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -572,9 +572,9 @@ describe('dbConnector', () => {
 
             expect(result.totalCount).to.equal(30);
             // With parameterized LIMIT, verify parameters instead
-            const secondCallParams = mockConnection.query.secondCall.args[1];
-            expect(secondCallParams).to.include(0); // offset
-            expect(secondCallParams).to.include(10); // pageSize
+            const pageParams = pageQuery().args[1];
+            expect(pageParams).to.include(0); // offset
+            expect(pageParams).to.include(10); // pageSize
         });
 
         it('should handle null page parameter (default to 0)', async () => {
@@ -582,8 +582,7 @@ describe('dbConnector', () => {
             const allData = Array.from({ length: 25 }, (_, i) => ({ id: i + 1 }));
             const pageData = allData.slice(0, 5);
 
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]);
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -595,9 +594,9 @@ describe('dbConnector', () => {
             );
 
             expect(result.totalCount).to.equal(25);
-            const secondCallParams = mockConnection.query.secondCall.args[1];
-            expect(secondCallParams).to.include(0); // offset
-            expect(secondCallParams).to.include(5); // pageSize
+            const pageParams = pageQuery().args[1];
+            expect(pageParams).to.include(0); // offset
+            expect(pageParams).to.include(5); // pageSize
         });
 
         it('should handle NaN page parameter (default to 0)', async () => {
@@ -605,8 +604,7 @@ describe('dbConnector', () => {
             const allData = Array.from({ length: 20 }, (_, i) => ({ id: i + 1 }));
             const pageData = allData.slice(0, 10);
 
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]);
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -618,9 +616,9 @@ describe('dbConnector', () => {
             );
 
             expect(result.totalCount).to.equal(20);
-            const secondCallParams = mockConnection.query.secondCall.args[1];
-            expect(secondCallParams).to.include(0); // offset
-            expect(secondCallParams).to.include(10); // pageSize
+            const pageParams = pageQuery().args[1];
+            expect(pageParams).to.include(0); // offset
+            expect(pageParams).to.include(10); // pageSize
         });
 
         it('should handle invalid string page parameter (default to 0)', async () => {
@@ -628,8 +626,7 @@ describe('dbConnector', () => {
             const allData = Array.from({ length: 30 }, (_, i) => ({ id: i + 1 }));
             const pageData = allData.slice(0, 10);
 
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]);
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -641,9 +638,9 @@ describe('dbConnector', () => {
             );
 
             expect(result.totalCount).to.equal(30);
-            const secondCallParams = mockConnection.query.secondCall.args[1];
-            expect(secondCallParams).to.include(0); // offset
-            expect(secondCallParams).to.include(10); // pageSize
+            const pageParams = pageQuery().args[1];
+            expect(pageParams).to.include(0); // offset
+            expect(pageParams).to.include(10); // pageSize
         });
 
         it('should handle negative page parameter (default to 0)', async () => {
@@ -651,8 +648,7 @@ describe('dbConnector', () => {
             const allData = Array.from({ length: 40 }, (_, i) => ({ id: i + 1 }));
             const pageData = allData.slice(0, 10);
 
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]);
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -664,9 +660,9 @@ describe('dbConnector', () => {
             );
 
             expect(result.totalCount).to.equal(40);
-            const secondCallParams = mockConnection.query.secondCall.args[1];
-            expect(secondCallParams).to.include(0); // offset
-            expect(secondCallParams).to.include(10); // pageSize
+            const pageParams = pageQuery().args[1];
+            expect(pageParams).to.include(0); // offset
+            expect(pageParams).to.include(10); // pageSize
         });
 
         it('should handle valid string page parameter', async () => {
@@ -674,8 +670,7 @@ describe('dbConnector', () => {
             const allData = Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }));
             const pageData = allData.slice(20, 30);
 
-            mockConnection.query.onFirstCall().resolves([allData]); // Full data for count
-            mockConnection.query.onSecondCall().resolves([pageData]);
+            mockPaginationQueries(allData.length, pageData);
             addArrayItemStub.resolves();
 
             const result = await dbConnector.getCacheQueryPagination(
@@ -687,9 +682,9 @@ describe('dbConnector', () => {
             );
 
             expect(result.totalCount).to.equal(50);
-            const secondCallParams = mockConnection.query.secondCall.args[1];
-            expect(secondCallParams).to.include(20); // offset
-            expect(secondCallParams).to.include(10); // pageSize
+            const pageParams = pageQuery().args[1];
+            expect(pageParams).to.include(20); // offset
+            expect(pageParams).to.include(10); // pageSize
         });
     });
 

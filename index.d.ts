@@ -74,6 +74,11 @@ declare module 'node-caching-mysql-connector-with-redis' {
      * **v2.6.0:** cacheName is now optional when CORE_AUTO_FEATURES=true.
      * The cache key will be auto-generated from the SQL query and parameters.
      *
+     * **v2.9.0:** concurrent cache misses for the same key, database, SQL and parameters share
+     * one database query; every caller still gets its own copy of the rows
+     * (`DB_COALESCE_QUERIES=false` turns this off). Auto-generated keys of calls that pass
+     * `database` end with `@<database>`, so databases (tenants) never share cache entries.
+     *
      * @param sql - The SQL query to be executed
      * @param parameters - The parameters to be passed to the SQL query
      * @param cacheName - The name of the cache to store the data (optional if auto key enabled)
@@ -114,6 +119,11 @@ declare module 'node-caching-mysql-connector-with-redis' {
      * Retrieves paginated data from cache or database based on the provided SQL query and parameters.
      * If the data is available in cache, it is returned directly. Otherwise, the data is fetched from the database,
      * paginated, and then stored in the cache for future use.
+     *
+     * **v2.9.0:** the total is counted with `SELECT COUNT(*)` over the query, and not at all when the
+     * requested page is the last one. Queries MySQL cannot wrap in a derived table (e.g. duplicate
+     * column names) are counted by fetching every row, as before. A leading `MAX_EXECUTION_TIME`
+     * optimizer hint also bounds the count.
      *
      * @param sql - The SQL query to execute
      * @param parameters - The parameters to be used in the SQL query
@@ -158,6 +168,10 @@ declare module 'node-caching-mysql-connector-with-redis' {
     /**
      * Retrieves an item from Redis cache
      *
+     * Never throws: returns `[]` on a miss or when Redis is unavailable. Once Redis has been
+     * unavailable for REDIS_WAIT_TIMEOUT it returns `[]` without waiting (REDIS_FAIL_FAST), and a
+     * command unanswered for REDIS_COMMAND_TIMEOUT also falls back to `[]`.
+     *
      * @param key - The cache key
      * @returns A promise that resolves to the cached data or empty array if not found
      *
@@ -173,6 +187,9 @@ declare module 'node-caching-mysql-connector-with-redis' {
 
     /**
      * Stores an item in Redis cache with optional expiry
+     *
+     * Never throws: if Redis is unavailable the data is returned without being cached
+     * (without waiting once Redis has been down for REDIS_WAIT_TIMEOUT).
      *
      * @param key - The cache key
      * @param array - The data to cache
@@ -193,6 +210,9 @@ declare module 'node-caching-mysql-connector-with-redis' {
     /**
      * Deletes one or more keys from Redis cache
      *
+     * Waits for Redis (up to REDIS_WAIT_TIMEOUT) and is never cut short by REDIS_COMMAND_TIMEOUT.
+     * Keys that could not be deleted because Redis was unreachable are deleted once it is ready again.
+     *
      * @param keys - Single key or array of keys to delete
      * @returns A promise that resolves when deletion is complete
      *
@@ -209,6 +229,11 @@ declare module 'node-caching-mysql-connector-with-redis' {
 
     /**
      * Deletes all keys matching a prefix pattern from Redis cache
+     *
+     * Uses SCAN (REDIS_SCAN_COUNT keys per round trip) and deletes while scanning. Several prefixes
+     * are scanned concurrently; prefixes that can share one pass (e.g. 'users_' and 'users:') are
+     * merged. Waits for Redis like delKeyItem, and invalidations that could not run because Redis
+     * was unreachable are replayed once it is ready again.
      *
      * @param keys - Single prefix or array of prefixes
      * @returns A promise that resolves when deletion is complete
@@ -227,6 +252,7 @@ declare module 'node-caching-mysql-connector-with-redis' {
     /**
      * Check if Redis connection is healthy.
      * Useful for health-check endpoints and monitoring.
+     * With REDIS_ENABLED=false the first call opens the connection.
      *
      * @returns true if Redis is connected and ready
      *
@@ -284,6 +310,11 @@ declare module 'node-caching-mysql-connector-with-redis' {
         timeout?: number;
         /** Database name to switch to */
         database?: string | null;
+        /**
+         * v2.9.0: stop a query that is still running on the server when the timeout fires
+         * (KILL QUERY), instead of letting it finish and cache its result (default: false)
+         */
+        cancelOnTimeout?: boolean;
     }
 
     /**
@@ -332,6 +363,10 @@ declare module 'node-caching-mysql-connector-with-redis' {
     /**
      * Executes a query with timeout protection to prevent long-running queries.
      * Automatically retries on connection errors with exponential backoff.
+     *
+     * **v2.9.0:** a call whose timeout fires before its query started (e.g. while waiting for a
+     * pool connection) no longer runs the query afterwards. A query that is already running
+     * keeps running and caches its result, unless `cancelOnTimeout: true` is set.
      *
      * @param sql - The SQL query to execute
      * @param parameters - Query parameters
