@@ -561,11 +561,12 @@ async function loadOnce(key, load) {
 
     if (!isOverdue(inflight)) {
         const outcome = await Promise.race([
-            inflight.promise.then(value => ({ value }), err => ({ err })),
+            // Copied in the load's first reaction, before the first caller can change the rows
+            inflight.promise.then(value => ({ value: cloneResult(value) }), err => ({ err })),
             whenOverdue(inflight)
         ]);
         if (outcome) {
-            if (!('err' in outcome)) return cloneResult(outcome.value);
+            if (!('err' in outcome)) return outcome.value;
             if (isQueryTimeout(outcome.err)) throw outcome.err;
             return load();
         }

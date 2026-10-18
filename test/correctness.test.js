@@ -730,6 +730,21 @@ describe('Correctness & Safety (v2.9.1)', () => {
                 expect(selects).to.equal(2);
             });
 
+            it('copies the rows for waiting callers before the first caller can change them', async () => {
+                load();
+                mockConnection.query.callsFake(() => sleep(10).then(() => [[{ id: 1, name: 'Ada' }]]));
+
+                const first = read().then((rows) => {
+                    rows[0].name = 'changed';
+                    return rows;
+                });
+                const waiting = [read(), read(), read()];
+
+                const [changed, ...copies] = await Promise.all([first, ...waiting]);
+                expect(changed[0].name).to.equal('changed');
+                copies.forEach(rows => expect(rows[0].name).to.equal('Ada'));
+            });
+
             it('lets later callers join the fresh load instead of the overdue one', async () => {
                 load({ DB_COALESCE_MAX_WAIT: '50' });
                 let selects = 0;
