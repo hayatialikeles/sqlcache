@@ -125,6 +125,74 @@ const users = await getCacheQuery('SELECT * FROM users WHERE id = ?', [123]);
 
 ## Version Migration
 
+### v2.8.x → v2.9.0 (performance & resilience)
+
+No API, signature or return-shape changes. The observable differences are listed below; most
+can be switched back with an environment variable.
+
+#### Faster by default
+
+| Area | v2.8.x | v2.9.0 |
+|------|--------|--------|
+| `getCacheQueryPagination` total | Fetched **every row** of the query to count it | `SELECT COUNT(*)` over the query; no count at all when the page is the last one |
+| Concurrent cache misses (same key, database, SQL, parameters) | One query per caller | One query; every caller gets its own copy of the rows |
+| Calls with `database` | `USE db` on every call | `USE db` only when the pooled connection is on another database |
+| MySQL connection during cache writes / invalidation | Held for the Redis round trips | Returned to the pool first (outside transactions) |
+| `delPrefixKeyItem` / auto-invalidation | `SCAN COUNT 100`, one full scan per pattern (two per write) | `SCAN COUNT 1000`, one scan per write, deletes streamed while scanning |
+| Redis outage | Every cache read/write waited `REDIS_WAIT_TIMEOUT` | After `REDIS_WAIT_TIMEOUT` of downtime, reads/writes fall back at once |
+| Hung Redis connection | Calls could hang until TCP gave up (~15 min) | Reads/writes fall back after `REDIS_COMMAND_TIMEOUT`; a silent connection is reconnected |
+| Reconnect after Redis returns | Backoff up to 30 s | Backoff up to 5 s |
+| Retries on connection errors | 1 s, 2 s | 1 s, 2 s plus up to 20% jitter |
+| `getCacheQueryWithTimeout` timing out while waiting for a pool connection | Query still ran later (adding load to a saturated pool) | Query is not run |
+| `getCacheQueryWithTimeout` timing out while the query runs | Query keeps running | Same by default; `cancelOnTimeout: true` stops it with `KILL QUERY` |
+
+#### Bug fixes you may notice
+
+- **`USE db` no longer leaks between pooled callers.** A call with `database` used to leave its
+  pooled connection on that database, so a later call *without* `database` could run against the
+  wrong schema.
+- **Auto-generated keys are per database.** With auto keys, the same SQL on two databases (e.g. one
+  database per tenant) shared one cache entry, so one tenant could receive another tenant's rows.
+  Calls that pass `database` now get keys ending in `@<database>` (still under the `table:` prefix
+  that auto-invalidation deletes). Keys of calls without `database` are unchanged.
+- **Auto-invalidation understands MySQL modifiers.** `INSERT IGNORE`, `INSERT ... ON DUPLICATE KEY
+  UPDATE`, `UPDATE LOW_PRIORITY`, `DELETE QUICK`, `REPLACE ... 'UPDATE ...'` now invalidate the table
+  they write to (previously no table, or a wrong one).
+- **`bulkInsert` no longer re-inserts committed chunks** when a connection error triggers a retry.
+- **`closeConnections()` no longer hangs the process.** With mysql2 3.3.x the pool's idle reaper
+  kept running after `end()` and later spun in a synchronous loop at 100% CPU.
+- **The Redis client really never stops reconnecting.** node-redis gave up after one hour of retries,
+  leaving the cache disabled until a restart.
+- **Invalidations missed during a Redis outage are replayed** when Redis is ready again, instead of
+  leaving stale entries for the rest of their TTL.
+- A failed command sent without a callback through `getRedisClient()` no longer marks Redis as down.
+- `REDIS_ENABLED=false` no longer opens a Redis connection (and reconnect loop) at startup; it is
+  opened on the first direct Redis call, including `isRedisConnected()`.
+- An empty `REDIS_PASSWORD` no longer sends `AUTH ""`.
+
+#### Smaller observable differences (no switch)
+
+- Pagination counts with `COUNT(*)`, which does not evaluate the select list: a query whose select
+  list fails only on some rows (e.g. invalid JSON in a few rows) now fails only for pages that
+  contain those rows, and a session `sql_select_limit` no longer caps `totalCount`.
+- Statement hints other than a leading `MAX_EXECUTION_TIME` do not apply to the count query.
+- Log lines: during an outage there is one "Redis unavailable for … serving cache misses" line
+  instead of one failure line per call; new lines report command timeouts, reconnects of a silent
+  connection, and replayed invalidations.
+
+#### Restoring v2.8.x behavior
+
+```bash
+DB_COALESCE_QUERIES=false        # one query per concurrent cache miss
+REDIS_FAIL_FAST=false            # every cache read/write waits REDIS_WAIT_TIMEOUT during outages
+REDIS_COMMAND_TIMEOUT=0          # no per-command timeout (and no reconnect of silent connections)
+REDIS_RECONNECT_MAX_DELAY=30000  # previous reconnect backoff cap
+REDIS_SCAN_COUNT=100             # previous SCAN batch size
+```
+
+The pagination count, the `USE` handling and the merged invalidation scans have no switch: they
+return the same results with less work.
+
 ### v2.5.x → v2.6.0
 
 #### What's New

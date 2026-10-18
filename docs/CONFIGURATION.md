@@ -26,10 +26,11 @@ REDIS_PORT=6379               # Redis port
 
 ```bash
 DB_PORT=3306                          # MySQL port (default: 3306)
-DB_CONNECTION_LIMIT=10                # Max connections in pool (default: 10)
+DB_CONNECTION_LIMIT=10                # Max connections in pool (default: 151)
 DB_QUEUE_LIMIT=0                      # Max queued requests (default: 0 = unlimited)
 DB_CONNECT_TIMEOUT=10000              # Connection timeout in ms (default: 10000)
-DB_MULTIPLE_STATEMENTS=false          # Allow multiple statements (default: false)
+DB_MULTIPLE_STATEMENTS=false          # Allow multiple statements (default: true, for backward compatibility)
+DB_COALESCE_QUERIES=true              # Concurrent identical cache misses share one query (default: true)
 TIMEZONE=+00:00                       # Timezone offset (default: +00:00)
 ```
 
@@ -40,6 +41,24 @@ REDIS_PASSWORD=secret                 # Redis password (if required)
 REDIS_VHOST=my_app                    # Redis key namespace/prefix
 REDIS_ENABLED=true                    # Enable/disable Redis (default: true)
 ```
+
+#### Redis Resilience & Performance
+
+```bash
+REDIS_WAIT_TIMEOUT=10000              # Max wait (ms) for Redis to (re)connect before falling back (default: 10000)
+REDIS_FAIL_FAST=true                  # After REDIS_WAIT_TIMEOUT of downtime, cache reads/writes stop waiting (default: true)
+REDIS_COMMAND_TIMEOUT=10000           # Max time (ms) a cache read/write may stay unanswered (default: max(REDIS_WAIT_TIMEOUT, 10000), 0 = off)
+REDIS_RECONNECT_MAX_DELAY=5000        # Max delay (ms) between reconnect attempts (default: 5000; 30000 before v2.9.0)
+REDIS_SCAN_COUNT=1000                 # Keys examined per SCAN round trip in prefix deletes (default: 1000; 100 before v2.9.0)
+```
+
+Deletes (`delKeyItem`, `delPrefixKeyItem`, invalidation after writes) always wait for Redis and are
+never cut short by `REDIS_COMMAND_TIMEOUT`; deletes that fail because Redis is unreachable are
+replayed once it is ready again. See [MIGRATION.md](MIGRATION.md#v28x--v290-performance--resilience)
+for the full list of v2.9.0 changes and how to restore v2.8.x behavior.
+
+With `REDIS_ENABLED=false` no Redis connection is opened unless a Redis function
+(`getArrayItem`, `getRedisClient`, ...) is called directly.
 
 #### Smart Features (v2.6.0)
 
@@ -359,6 +378,20 @@ DB_CONNECTION_LIMIT=100
 # Solution: Increase timeout or optimize query
 
 DB_CONNECT_TIMEOUT=30000
+```
+
+### Redis Outage Log Lines
+
+```bash
+# "Redis operation failed: Redis unavailable for 10234ms — serving cache misses without waiting until it recovers"
+#   Redis has been unreachable for REDIS_WAIT_TIMEOUT: cache reads/writes fall back immediately
+#   (once per outage). Restore the old wait-on-every-call behavior with REDIS_FAIL_FAST=false.
+# "Redis operation failed: Redis get timed out after 10000ms"
+#   A command got no reply within REDIS_COMMAND_TIMEOUT. Raise it for slow links, or 0 to disable.
+# "Redis gave no reply for 10000ms — reconnecting"
+#   The connection was silent while commands waited (e.g. dropped after a failover); it is reopened.
+# "Redis: replaying 3 invalidation(s) missed while it was unavailable"
+#   Deletes that failed during the outage are being applied now that Redis is back.
 ```
 
 ### Cache Issues

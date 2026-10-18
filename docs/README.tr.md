@@ -197,6 +197,19 @@ REDIS_PASSWORD=secret
 REDIS_ENABLED=true
 ```
 
+### Performans ve Dayanıklılık Ayarları (v2.9.0)
+
+```bash
+DB_COALESCE_QUERIES=true          # Aynı anda gelen aynı cache-miss'ler tek sorguyu paylaşır (varsayılan: true)
+REDIS_WAIT_TIMEOUT=10000          # Redis'in (yeniden) bağlanması için en fazla bekleme, ms (varsayılan: 10000)
+REDIS_FAIL_FAST=true              # Bu süre kadar kesintiden sonra cache okuma/yazma beklemeden devam eder (varsayılan: true)
+REDIS_COMMAND_TIMEOUT=10000       # Tek bir komutun yanıtsız kalabileceği süre, ms (varsayılan: en az 10000, 0 = kapalı)
+REDIS_RECONNECT_MAX_DELAY=5000    # Yeniden bağlanma denemeleri arası en fazla bekleme, ms (varsayılan: 5000; önceden 30000)
+REDIS_SCAN_COUNT=1000             # Prefix silmede SCAN başına incelenen anahtar sayısı (varsayılan: 1000; önceden 100)
+```
+
+v2.8.x davranışına dönmek ve değişikliklerin listesi için: [MIGRATION.md](MIGRATION.md#v28x--v290-performance--resilience)
+
 ---
 
 ## 🔄 Geriye Dönük Uyumluluk

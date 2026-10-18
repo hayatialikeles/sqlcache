@@ -67,14 +67,21 @@ The package is designed for production environments where failures are expected:
 **Redis**
 - Unlimited reconnection with exponential backoff + jitter
 - Graceful degradation — reads return `[]`, writes return data without caching
+- Fail-fast during long outages: after `REDIS_WAIT_TIMEOUT`, cache reads/writes stop waiting
+- Per-command timeout for cache reads/writes, so a hung connection cannot hang requests
+- Invalidations missed during an outage are replayed when Redis is back
 - No crashes, no unhandled errors during Redis outages
-- `SCAN` instead of `KEYS` (cluster-safe)
+- `SCAN` instead of `KEYS` (cluster-safe), with deletes streamed while scanning
 
 **MySQL**
 - Connection pool with auto-reconnection (mysql2)
-- Retry with exponential backoff on connection errors
+- Connections are returned to the pool before any Redis I/O (outside transactions)
+- Concurrent cache misses for the same query share one database query
+- `USE db` only when a pooled connection is on another database (no leaking between callers)
+- Retry with exponential backoff + jitter on connection errors
 - Transaction atomicity preserved during crashes (auto-rollback)
 - Query timeout protection
+- Pagination counts with `COUNT(*)` instead of fetching every row
 
 **Tested against 18 chaos scenarios** including: Redis/MySQL kill during operations, rapid flapping, 30s outages, network partitions, connection pool exhaustion, thundering herd (200 concurrent), bulk write crashes, concurrent transaction kills, and double failure (Redis + MySQL both down).
 
@@ -89,6 +96,9 @@ DB_PASSWORD, DB_PORT=3306, REDIS_PORT=6379, REDIS_PASSWORD
 DB_CONNECTION_LIMIT=151, REDIS_VHOST=namespace
 CORE_AUTO_FEATURES=true, REDIS_ENABLED=true
 REDIS_WAIT_TIMEOUT=10000, DB_CONNECT_TIMEOUT=10000
+REDIS_FAIL_FAST=true, REDIS_COMMAND_TIMEOUT=10000
+REDIS_RECONNECT_MAX_DELAY=5000, REDIS_SCAN_COUNT=1000
+DB_COALESCE_QUERIES=true
 ```
 
 ## Use Cases
